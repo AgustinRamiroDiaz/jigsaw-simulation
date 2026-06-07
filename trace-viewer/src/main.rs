@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use iced::mouse;
-use iced::widget::{button, canvas, column, container, row, text};
+use iced::widget::{button, canvas, column, container, row, slider, text};
 use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
 use jigsaw_simulation::{
     Direction, Piece, SolveStep, SolveTrace, TraceAction, TracePolyomino, generate_guid_grid,
@@ -26,6 +26,7 @@ enum Message {
     Next,
     First,
     Last,
+    StepChanged(u32),
 }
 
 #[derive(Debug)]
@@ -57,6 +58,9 @@ fn update(viewer: &mut TraceViewer, message: Message) {
         Message::Next => viewer.step_index = (viewer.step_index + 1).min(viewer.last_index()),
         Message::First => viewer.step_index = 0,
         Message::Last => viewer.step_index = viewer.last_index(),
+        Message::StepChanged(step_index) => {
+            viewer.step_index = (step_index as usize).min(viewer.last_index())
+        }
     }
 }
 
@@ -80,8 +84,15 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         button("Previous").on_press(Message::Previous),
         button("Next").on_press(Message::Next),
         button("Last").on_press(Message::Last),
+        slider(
+            0..=viewer.last_index() as u32,
+            viewer.step_index as u32,
+            Message::StepChanged
+        )
+        .width(Fill),
     ]
-    .spacing(10);
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
 
     let stage = canvas(TraceCanvas {
         step: current_step.clone(),
