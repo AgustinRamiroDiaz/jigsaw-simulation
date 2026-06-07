@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct SideGuid(String);
 
 impl SideGuid {
@@ -9,7 +11,7 @@ impl SideGuid {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Deserialize, Serialize)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
@@ -29,7 +31,7 @@ impl Point {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Direction {
     Top,
     Right,
@@ -73,7 +75,7 @@ impl Direction {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Piece {
     sides: [SideGuid; 4],
 }
@@ -94,6 +96,52 @@ impl Piece {
             self.sides[Direction::Right.index()].clone(),
             self.sides[Direction::Bottom.index()].clone(),
         ])
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TraceCell {
+    pub point: Point,
+    pub piece: Piece,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TracePolyomino {
+    pub cells: Vec<TraceCell>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum TraceAction {
+    Started,
+    Joined {
+        first_index: usize,
+        second_index: usize,
+    },
+    Rejected {
+        first_index: usize,
+        second_index: usize,
+    },
+    FallbackJoined {
+        first_index: usize,
+        second_index: usize,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct SolveStep {
+    pub attempt: usize,
+    pub action: TraceAction,
+    pub polyominos: Vec<TracePolyomino>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct SolveTrace {
+    pub steps: Vec<SolveStep>,
+}
+
+impl SolveTrace {
+    pub fn last_step(&self) -> Option<&SolveStep> {
+        self.steps.last()
     }
 }
 
@@ -121,6 +169,17 @@ impl Polyomino {
 
     pub fn piece_at(&self, point: Point) -> Option<&Piece> {
         self.cells.get(&point)
+    }
+
+    pub fn trace_snapshot(&self) -> TracePolyomino {
+        let mut cells: Vec<_> = self
+            .normalized_clone()
+            .cells
+            .into_iter()
+            .map(|(point, piece)| TraceCell { point, piece })
+            .collect();
+        cells.sort_by_key(|cell| (cell.point.y, cell.point.x));
+        TracePolyomino { cells }
     }
 
     pub fn try_join(&self, other: &Polyomino) -> Option<Polyomino> {
@@ -308,6 +367,13 @@ pub fn pieces_from_grid(grid: &[Vec<Piece>]) -> Vec<Piece> {
 }
 
 pub fn solve_puzzle(pieces: Vec<Piece>, seed: u64) -> Result<Vec<Vec<Piece>>, PuzzleError> {
+    solve_puzzle_with_trace(pieces, seed).map(|(grid, _trace)| grid)
+}
+
+pub fn solve_puzzle_with_trace(
+    pieces: Vec<Piece>,
+    seed: u64,
+) -> Result<(Vec<Vec<Piece>>, SolveTrace), PuzzleError> {
     if pieces.is_empty() {
         return Err(PuzzleError::EmptyPuzzle);
     }
@@ -315,6 +381,10 @@ pub fn solve_puzzle(pieces: Vec<Piece>, seed: u64) -> Result<Vec<Vec<Piece>>, Pu
     let mut rng = SimpleRng::new(seed);
     let mut polyominos: Vec<Polyomino> = pieces.into_iter().map(Polyomino::from_piece).collect();
     let mut failed_attempts = 0;
+    let mut attempts = 0;
+    let mut trace = SolveTrace {
+        steps: vec![trace_step(0, TraceAction::Started, &polyominos)],
+    };
     let max_failed_attempts = polyominos.len().saturating_mul(polyominos.len()).max(16) * 128;
 
     while polyominos.len() > 1 {
@@ -322,26 +392,57 @@ pub fn solve_puzzle(pieces: Vec<Piece>, seed: u64) -> Result<Vec<Vec<Piece>>, Pu
         let first = polyominos.swap_remove(first_index);
         let second_index = rng.next_index(polyominos.len());
         let second = polyominos.swap_remove(second_index);
+        attempts += 1;
 
         if let Some(joined) = first.try_join(&second) {
             polyominos.push(joined);
             failed_attempts = 0;
+            trace.steps.push(trace_step(
+                attempts,
+                TraceAction::Joined {
+                    first_index,
+                    second_index,
+                },
+                &polyominos,
+            ));
             continue;
         }
 
         polyominos.push(first);
         polyominos.push(second);
         failed_attempts += 1;
+        trace.steps.push(trace_step(
+            attempts,
+            TraceAction::Rejected {
+                first_index,
+                second_index,
+            },
+            &polyominos,
+        ));
 
         if failed_attempts >= max_failed_attempts {
-            if !join_first_available_pair(&mut polyominos) {
+            attempts += 1;
+            if let Some((first_index, second_index)) = join_first_available_pair(&mut polyominos) {
+                trace.steps.push(trace_step(
+                    attempts,
+                    TraceAction::FallbackJoined {
+                        first_index,
+                        second_index,
+                    },
+                    &polyominos,
+                ));
+            } else {
                 return Err(PuzzleError::CouldNotSolve);
             }
             failed_attempts = 0;
         }
     }
 
-    polyominos.pop().unwrap().to_grid()
+    polyominos
+        .pop()
+        .unwrap()
+        .to_grid()
+        .map(|grid| (grid, trace))
 }
 
 pub fn assert_grid_has_matching_neighbors(grid: &[Vec<Piece>]) {
@@ -363,7 +464,7 @@ pub fn assert_grid_has_matching_neighbors(grid: &[Vec<Piece>]) {
     });
 }
 
-fn join_first_available_pair(polyominos: &mut Vec<Polyomino>) -> bool {
+fn join_first_available_pair(polyominos: &mut Vec<Polyomino>) -> Option<(usize, usize)> {
     (0..polyominos.len())
         .find_map(|first_index| {
             ((first_index + 1)..polyominos.len()).find_map(|second_index| {
@@ -372,12 +473,20 @@ fn join_first_available_pair(polyominos: &mut Vec<Polyomino>) -> bool {
                     .map(|joined| (first_index, second_index, joined))
             })
         })
-        .is_some_and(|(first_index, second_index, joined)| {
+        .map(|(first_index, second_index, joined)| {
             polyominos.swap_remove(second_index);
             polyominos.swap_remove(first_index);
             polyominos.push(joined);
-            true
+            (first_index, second_index)
         })
+}
+
+fn trace_step(attempt: usize, action: TraceAction, polyominos: &[Polyomino]) -> SolveStep {
+    SolveStep {
+        attempt,
+        action,
+        polyominos: polyominos.iter().map(Polyomino::trace_snapshot).collect(),
+    }
 }
 
 fn all_touching_edges_match(cells: &HashMap<Point, Piece>) -> bool {
@@ -545,5 +654,31 @@ mod tests {
         assert_grid_has_matching_neighbors(&solved);
         assert_eq!(solved.len(), rows);
         assert_eq!(solved[0].len(), cols);
+    }
+
+    #[test]
+    fn solving_with_trace_records_algorithm_snapshots() {
+        let grid = generate_guid_grid(3, 2);
+        let pieces = pieces_from_grid(&grid);
+
+        let (solved, trace) = solve_puzzle_with_trace(pieces, 7).expect("puzzle should solve");
+
+        assert_grid_has_matching_neighbors(&solved);
+        assert!(matches!(trace.steps[0].action, TraceAction::Started));
+        assert_eq!(trace.steps[0].polyominos.len(), 6);
+        assert_eq!(
+            trace
+                .last_step()
+                .expect("trace should have a final step")
+                .polyominos
+                .len(),
+            1
+        );
+        assert!(
+            trace
+                .steps
+                .iter()
+                .any(|step| matches!(step.action, TraceAction::Joined { .. }))
+        );
     }
 }

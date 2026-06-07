@@ -1,0 +1,270 @@
+use iced::mouse;
+use iced::widget::{button, canvas, column, container, row, text};
+use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
+use jigsaw_simulation::{
+    Piece, SolveStep, SolveTrace, TraceAction, TracePolyomino, generate_guid_grid,
+    pieces_from_grid, solve_puzzle_with_trace,
+};
+
+fn main() -> iced::Result {
+    iced::application(TraceViewer::new, update, view)
+        .title(title)
+        .window_size(Size::new(1180.0, 760.0))
+        .antialiasing(true)
+        .run()
+}
+
+fn title(_viewer: &TraceViewer) -> String {
+    String::from("Jigsaw Trace Viewer")
+}
+
+#[derive(Clone, Debug)]
+enum Message {
+    Previous,
+    Next,
+    First,
+    Last,
+}
+
+#[derive(Debug)]
+struct TraceViewer {
+    trace: SolveTrace,
+    step_index: usize,
+}
+
+impl TraceViewer {
+    fn new() -> Self {
+        Self {
+            trace: sample_trace(),
+            step_index: 0,
+        }
+    }
+
+    fn current_step(&self) -> &SolveStep {
+        &self.trace.steps[self.step_index]
+    }
+
+    fn last_index(&self) -> usize {
+        self.trace.steps.len().saturating_sub(1)
+    }
+}
+
+fn update(viewer: &mut TraceViewer, message: Message) {
+    match message {
+        Message::Previous => viewer.step_index = viewer.step_index.saturating_sub(1),
+        Message::Next => viewer.step_index = (viewer.step_index + 1).min(viewer.last_index()),
+        Message::First => viewer.step_index = 0,
+        Message::Last => viewer.step_index = viewer.last_index(),
+    }
+}
+
+fn view(viewer: &TraceViewer) -> Element<'_, Message> {
+    let current_step = viewer.current_step();
+    let header = row![
+        text("Jigsaw trace").size(28),
+        text(format!(
+            "step {} of {}",
+            viewer.step_index,
+            viewer.last_index()
+        ))
+        .size(18),
+        text(action_label(&current_step.action)).size(18),
+    ]
+    .spacing(18)
+    .align_y(iced::Alignment::Center);
+
+    let controls = row![
+        button("First").on_press(Message::First),
+        button("Previous").on_press(Message::Previous),
+        button("Next").on_press(Message::Next),
+        button("Last").on_press(Message::Last),
+    ]
+    .spacing(10);
+
+    let stage = canvas(TraceCanvas {
+        step: current_step.clone(),
+    })
+    .width(Fill)
+    .height(Fill);
+
+    container(column![header, controls, stage].spacing(14))
+        .padding(18)
+        .width(Fill)
+        .height(Fill)
+        .into()
+}
+
+#[derive(Clone, Debug)]
+struct TraceCanvas {
+    step: SolveStep,
+}
+
+impl<Message> canvas::Program<Message> for TraceCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let background = canvas::Path::rectangle(CanvasPoint::ORIGIN, bounds.size());
+        frame.fill(&background, Color::from_rgb8(245, 247, 250));
+
+        let layout = layout_polyominos(&self.step.polyominos, bounds.width);
+
+        layout.iter().for_each(|entry| {
+            draw_polyomino(&mut frame, &entry.polyomino, entry.origin, entry.cell_size);
+        });
+
+        vec![frame.into_geometry()]
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PolyominoLayout<'a> {
+    polyomino: &'a TracePolyomino,
+    origin: CanvasPoint,
+    cell_size: f32,
+}
+
+fn layout_polyominos(polyominos: &[TracePolyomino], width: f32) -> Vec<PolyominoLayout<'_>> {
+    let margin = 24.0;
+    let gap = 20.0;
+    let cell_size = if polyominos.len() > 30 { 12.0 } else { 24.0 };
+
+    polyominos
+        .iter()
+        .scan((margin, margin, 0.0), |(x, y, row_height), polyomino| {
+            let (poly_width, poly_height) = polyomino_size(polyomino, cell_size);
+
+            if *x + poly_width > width - margin && *x > margin {
+                *x = margin;
+                *y += *row_height + gap;
+                *row_height = 0.0;
+            }
+
+            let origin = CanvasPoint::new(*x, *y);
+            *x += poly_width + gap;
+            *row_height = row_height.max(poly_height);
+
+            Some(PolyominoLayout {
+                polyomino,
+                origin,
+                cell_size,
+            })
+        })
+        .collect()
+}
+
+fn draw_polyomino(
+    frame: &mut canvas::Frame,
+    polyomino: &TracePolyomino,
+    origin: CanvasPoint,
+    cell_size: f32,
+) {
+    polyomino.cells.iter().for_each(|cell| {
+        let x = origin.x + cell.point.x as f32 * cell_size;
+        let y = origin.y + cell.point.y as f32 * cell_size;
+        let rect = canvas::Path::rectangle(
+            CanvasPoint::new(x, y),
+            Size::new(cell_size - 2.0, cell_size - 2.0),
+        );
+        frame.fill(&rect, color_for_piece(&cell.piece));
+        frame.stroke(
+            &rect,
+            canvas::Stroke::default()
+                .with_color(Color::from_rgb8(42, 48, 58))
+                .with_width(1.0),
+        );
+    });
+}
+
+fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
+    let max_x = polyomino
+        .cells
+        .iter()
+        .map(|cell| cell.point.x)
+        .max()
+        .unwrap_or(0);
+    let max_y = polyomino
+        .cells
+        .iter()
+        .map(|cell| cell.point.y)
+        .max()
+        .unwrap_or(0);
+
+    (
+        (max_x + 1) as f32 * cell_size,
+        (max_y + 1) as f32 * cell_size,
+    )
+}
+
+fn color_for_piece(piece: &Piece) -> Color {
+    let hash = format!("{piece:?}").bytes().fold(0_u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    let r = 80 + (hash & 0x7f) as u8;
+    let g = 80 + ((hash >> 8) & 0x7f) as u8;
+    let b = 80 + ((hash >> 16) & 0x7f) as u8;
+
+    Color::from_rgb8(r, g, b)
+}
+
+fn action_label(action: &TraceAction) -> String {
+    match action {
+        TraceAction::Started => String::from("started"),
+        TraceAction::Joined {
+            first_index,
+            second_index,
+        } => format!("joined {first_index} + {second_index}"),
+        TraceAction::Rejected {
+            first_index,
+            second_index,
+        } => format!("rejected {first_index} + {second_index}"),
+        TraceAction::FallbackJoined {
+            first_index,
+            second_index,
+        } => format!("fallback joined {first_index} + {second_index}"),
+    }
+}
+
+fn sample_trace() -> SolveTrace {
+    let grid = generate_guid_grid(6, 6);
+    let mut pieces = pieces_from_grid(&grid);
+    let mut rng = ViewerRng::new(42);
+
+    pieces.iter_mut().for_each(|piece| {
+        *piece = (0..rng.next_index(4)).fold(piece.clone(), |piece, _| piece.rotate_clockwise())
+    });
+
+    (1..pieces.len()).rev().for_each(|index| {
+        let swap_index = rng.next_index(index + 1);
+        pieces.swap(index, swap_index);
+    });
+
+    solve_puzzle_with_trace(pieces, 9)
+        .expect("sample trace should solve")
+        .1
+}
+
+#[derive(Debug)]
+struct ViewerRng {
+    state: u64,
+}
+
+impl ViewerRng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed.max(1) }
+    }
+
+    fn next_index(&mut self, len: usize) -> usize {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 7;
+        self.state ^= self.state << 17;
+        (self.state as usize) % len
+    }
+}
