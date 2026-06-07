@@ -134,6 +134,59 @@ fn solves_generated_grid_back_into_a_complete_piece_grid() {
 }
 
 #[test]
+fn puzzle_solver_yields_started_step_first() {
+    let grid = generate_guid_grid(2, 2);
+    let pieces = pieces_from_grid(&grid);
+    let mut solver = PuzzleSolver::new(pieces, 7).expect("solver should initialize");
+
+    let first_step = solver
+        .next()
+        .expect("solver should yield initial step")
+        .expect("initial step should succeed");
+
+    assert_eq!(first_step.attempt, 0);
+    assert!(matches!(first_step.action, TraceAction::Started));
+    assert_eq!(first_step.polyominos.len(), 4);
+    assert!(solver.solution().is_none());
+}
+
+#[test]
+fn puzzle_solver_collected_steps_match_trace_solver() {
+    let grid = generate_guid_grid(3, 2);
+    let pieces = pieces_from_grid(&grid);
+    let mut solver = PuzzleSolver::new(pieces.clone(), 7).expect("solver should initialize");
+
+    let collected_steps = solver
+        .by_ref()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("iterator should solve");
+    let (_, eager_trace) = solve_puzzle_with_trace(pieces, 7).expect("eager trace should solve");
+
+    assert_eq!(collected_steps, eager_trace.steps);
+}
+
+#[test]
+fn puzzle_solver_solution_is_available_after_completion() {
+    let grid = generate_guid_grid(4, 3);
+    let pieces = pieces_from_grid(&grid);
+    let mut solver = PuzzleSolver::new(pieces, 11).expect("solver should initialize");
+
+    solver
+        .by_ref()
+        .try_for_each(|step| step.map(|_| ()))
+        .expect("iterator should solve");
+
+    let solved = solver
+        .solution()
+        .expect("solution should be available after iterator completes")
+        .expect("solution should be valid");
+
+    assert_grid_has_matching_neighbors(&solved);
+    assert_eq!(solved.len(), 3);
+    assert_eq!(solved[0].len(), 4);
+}
+
+#[test]
 fn solving_with_trace_records_algorithm_snapshots() {
     let grid = generate_guid_grid(3, 2);
     let pieces = pieces_from_grid(&grid);

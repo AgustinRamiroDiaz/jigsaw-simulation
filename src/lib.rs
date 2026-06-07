@@ -11,8 +11,8 @@ pub use geometry::{Direction, Point};
 pub use piece::{Piece, SideGuid};
 pub use polyomino::Polyomino;
 pub use solver::{
-    assert_grid_has_matching_neighbors, generate_guid_grid, pieces_from_grid, solve_puzzle,
-    solve_puzzle_with_trace,
+    PuzzleSolver, assert_grid_has_matching_neighbors, generate_guid_grid, pieces_from_grid,
+    solve_puzzle, solve_puzzle_with_trace,
 };
 pub use trace::{SolveStep, SolveTrace, TraceAction, TraceCell, TracePolyomino};
 

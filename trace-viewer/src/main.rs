@@ -5,8 +5,8 @@ use iced::mouse;
 use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
 use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
 use jigsaw_simulation::{
-    Direction, Piece, SolveStep, SolveTrace, TraceAction, TracePolyomino, generate_guid_grid,
-    pieces_from_grid, solve_puzzle_with_trace,
+    Direction, Piece, PuzzleSolver, SolveStep, TraceAction, TracePolyomino, generate_guid_grid,
+    pieces_from_grid,
 };
 
 fn main() -> iced::Result {
@@ -36,7 +36,8 @@ enum Message {
 
 #[derive(Debug)]
 struct TraceViewer {
-    trace: SolveTrace,
+    solver: Option<PuzzleSolver>,
+    steps: Vec<SolveStep>,
     step_index: usize,
     width_input: String,
     height_input: String,
@@ -45,28 +46,31 @@ struct TraceViewer {
 
 impl TraceViewer {
     fn new() -> Self {
+        let (solver, steps) = start_solver(6, 6).expect("default trace should start");
+
         Self {
-            trace: build_trace(6, 6).expect("default trace should solve"),
+            solver: Some(solver),
+            steps,
             step_index: 0,
             width_input: String::from("6"),
             height_input: String::from("6"),
-            status: String::from("6 x 6 puzzle"),
+            status: String::from("6 x 6 puzzle ready"),
         }
     }
 
     fn current_step(&self) -> &SolveStep {
-        &self.trace.steps[self.step_index]
+        &self.steps[self.step_index]
     }
 
     fn last_index(&self) -> usize {
-        self.trace.steps.len().saturating_sub(1)
+        self.steps.len().saturating_sub(1)
     }
 }
 
 fn update(viewer: &mut TraceViewer, message: Message) {
     match message {
         Message::Previous => viewer.step_index = viewer.step_index.saturating_sub(1),
-        Message::Next => viewer.step_index = (viewer.step_index + 1).min(viewer.last_index()),
+        Message::Next => advance_to_next_step(viewer),
         Message::First => viewer.step_index = 0,
         Message::Last => viewer.step_index = viewer.last_index(),
         Message::StepChanged(step_index) => {
@@ -75,14 +79,15 @@ fn update(viewer: &mut TraceViewer, message: Message) {
         Message::WidthChanged(width) => viewer.width_input = width,
         Message::HeightChanged(height) => viewer.height_input = height,
         Message::Generate => match requested_dimensions(viewer) {
-            Ok((width, height)) => match build_trace(width, height) {
-                Ok(trace) => {
-                    viewer.trace = trace;
+            Ok((width, height)) => match start_solver(width, height) {
+                Ok((solver, steps)) => {
+                    viewer.solver = Some(solver);
+                    viewer.steps = steps;
                     viewer.step_index = 0;
-                    viewer.status = format!("{width} x {height} puzzle");
+                    viewer.status = format!("{width} x {height} puzzle ready");
                 }
                 Err(error) => {
-                    viewer.status = format!("could not solve puzzle: {error:?}");
+                    viewer.status = error;
                 }
             },
             Err(message) => viewer.status = message,
@@ -95,7 +100,7 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
     let header = row![
         text("Jigsaw trace").size(28),
         text(format!(
-            "step {} of {}",
+            "step {} of {} executed",
             viewer.step_index,
             viewer.last_index()
         ))
@@ -123,7 +128,7 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
     let controls = row![
         button("First").on_press(Message::First),
         button("Previous").on_press(Message::Previous),
-        button("Next").on_press(Message::Next),
+        button("Execute step").on_press(Message::Next),
         button("Last").on_press(Message::Last),
         slider(
             0..=viewer.last_index() as u32,
@@ -347,7 +352,54 @@ fn requested_dimensions(viewer: &TraceViewer) -> Result<(usize, usize), String> 
     }
 }
 
-fn build_trace(width: usize, height: usize) -> Result<SolveTrace, jigsaw_simulation::PuzzleError> {
+fn advance_to_next_step(viewer: &mut TraceViewer) {
+    if viewer.step_index + 1 < viewer.steps.len() {
+        viewer.step_index += 1;
+        return;
+    }
+
+    let Some(solver) = viewer.solver.as_mut() else {
+        viewer.status = String::from("puzzle already solved");
+        return;
+    };
+
+    match solver.next() {
+        Some(Ok(step)) => {
+            viewer.steps.push(step);
+            viewer.step_index = viewer.last_index();
+            viewer.status = format!("executed step {}", viewer.step_index);
+        }
+        Some(Err(error)) => {
+            viewer.solver = None;
+            viewer.status = format!("could not solve puzzle: {error:?}");
+        }
+        None => {
+            let status = match solver.solution() {
+                Some(Ok(_)) => String::from("puzzle solved"),
+                Some(Err(error)) => format!("could not solve puzzle: {error:?}"),
+                None => String::from("solver stopped without a solution"),
+            };
+            viewer.solver = None;
+            viewer.status = status;
+        }
+    }
+}
+
+fn start_solver(width: usize, height: usize) -> Result<(PuzzleSolver, Vec<SolveStep>), String> {
+    let mut solver = build_solver(width, height)
+        .map_err(|error| format!("could not start puzzle solver: {error:?}"))?;
+    let first_step = solver
+        .next()
+        .ok_or_else(|| String::from("solver did not produce an initial step"))?
+        .map_err(|error| format!("could not start puzzle solver: {error:?}"))?;
+
+    Ok((solver, vec![first_step]))
+}
+
+fn build_solver(
+    width: usize,
+    height: usize,
+) -> Result<PuzzleSolver, jigsaw_simulation::PuzzleError> {
     let grid = generate_guid_grid(width, height);
     let mut pieces = pieces_from_grid(&grid);
     let mut rng = ViewerRng::new((width as u64) << 32 | height as u64);
@@ -361,7 +413,7 @@ fn build_trace(width: usize, height: usize) -> Result<SolveTrace, jigsaw_simulat
         pieces.swap(index, swap_index);
     });
 
-    solve_puzzle_with_trace(pieces, 9).map(|(_, trace)| trace)
+    PuzzleSolver::new(pieces, 9)
 }
 
 #[derive(Debug)]
