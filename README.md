@@ -1,0 +1,107 @@
+# Jigsaw Simulation
+
+A Rust simulation of a jigsaw puzzle solver.
+
+The puzzle is modeled as a rectangular grid of pieces. Each piece has four
+sides, and each side has a GUID-like identifier. Two pieces can connect when
+the identifiers on the touching sides match. Pieces are represented as four
+side IDs in this order:
+
+```text
+[top, right, bottom, left]
+```
+
+The solver converts pieces into one-cell polyominos, repeatedly tries to join
+random pairs, handles rotations, and stops when one complete polyomino remains.
+
+## Workspace
+
+This repository is a Cargo workspace with two packages:
+
+```text
+jigsaw-simulation   Core puzzle model, solver, tests, and trace API
+trace-viewer        Iced GUI for stepping through solver trace snapshots
+```
+
+## Algorithm
+
+The core solver follows this process:
+
+```text
+start with the set of all pieces
+convert them to polyominos of just one square
+loop until only one polyomino is left:
+- pick 2 random polyominos
+- check all possible rotations and placements
+- if they can be joined, join them and put the result back into the set
+- otherwise, put both polyominos back into the set
+convert the final polyomino into a grid of pieces
+```
+
+Polyominos can contain holes, and the join logic considers those holes when
+testing candidate placements.
+
+## Trace API
+
+The core crate exposes two solver entry points:
+
+```rust
+solve_puzzle(pieces, seed)
+solve_puzzle_with_trace(pieces, seed)
+```
+
+`solve_puzzle_with_trace` returns both the solved grid and a `SolveTrace`.
+The trace contains ordered `SolveStep` snapshots, including:
+
+- the attempt number
+- the action taken: started, joined, rejected, or fallback joined
+- the current set of polyominos after that step
+
+This keeps the solver testable while giving the viewer everything it needs to
+visualize the algorithm.
+
+## Trace Viewer
+
+Run the Iced viewer with:
+
+```bash
+cargo run -p trace-viewer
+```
+
+The viewer generates a sample puzzle, randomly rotates and shuffles the pieces,
+runs the traced solver, and lets you step through the algorithm with:
+
+- First
+- Previous
+- Next
+- Last
+
+Each square is drawn as one puzzle piece. Each polyomino is laid out separately
+so you can watch the set shrink as successful joins occur.
+
+## Development
+
+Run the core tests:
+
+```bash
+cargo test -p jigsaw-simulation
+```
+
+Check the viewer:
+
+```bash
+cargo check -p trace-viewer
+```
+
+Format the workspace:
+
+```bash
+cargo fmt
+```
+
+Run everything you usually need:
+
+```bash
+cargo test -p jigsaw-simulation
+cargo check -p trace-viewer
+```
