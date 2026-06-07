@@ -117,7 +117,7 @@ impl<Message> canvas::Program<Message> for TraceCanvas {
         let layout = layout_polyominos(&self.step.polyominos, bounds.width);
 
         layout.iter().for_each(|entry| {
-            draw_polyomino(&mut frame, &entry.polyomino, entry.origin, entry.cell_size);
+            draw_polyomino(&mut frame, entry.polyomino, entry.origin, entry.cell_size);
         });
 
         vec![frame.into_geometry()]

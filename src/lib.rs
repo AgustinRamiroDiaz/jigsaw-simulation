@@ -167,6 +167,10 @@ impl Polyomino {
         self.cells.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
     pub fn piece_at(&self, point: Point) -> Option<&Piece> {
         self.cells.get(&point)
     }
@@ -196,18 +200,15 @@ impl Polyomino {
                             })
                         })
                 })
-                .filter_map(
-                    |(self_point, self_piece, other_point, other_piece, direction)| {
-                        (self_piece.side(direction) == other_piece.side(direction.opposite())).then(
-                            || {
-                                Point::new(
-                                    self_point.x + direction.delta().x - other_point.x,
-                                    self_point.y + direction.delta().y - other_point.y,
-                                )
-                            },
-                        )
-                    },
-                )
+                .filter(|(_, self_piece, _, other_piece, direction)| {
+                    self_piece.side(*direction) == other_piece.side(direction.opposite())
+                })
+                .map(|(self_point, _, other_point, _, direction)| {
+                    Point::new(
+                        self_point.x + direction.delta().x - other_point.x,
+                        self_point.y + direction.delta().y - other_point.y,
+                    )
+                })
                 .find_map(|offset| self.join_translated(&rotated, offset))
         })
     }
