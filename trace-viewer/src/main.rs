@@ -1,9 +1,13 @@
 use std::fmt::Debug;
+use std::time::Duration;
 
 use iced::Font;
 use iced::mouse;
-use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
-use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
+use iced::time;
+use iced::widget::{button, canvas, checkbox, column, container, row, slider, text, text_input};
+use iced::{
+    Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Subscription, Theme,
+};
 use jigsaw_simulation::{
     Direction, Piece, PuzzleSolver, SolveStep, TraceAction, TracePolyomino, generate_guid_grid,
     pieces_from_grid,
@@ -13,6 +17,7 @@ fn main() -> iced::Result {
     iced::application(TraceViewer::new, update, view)
         .default_font(Font::DEFAULT)
         .title(title)
+        .subscription(subscription)
         .window_size(Size::new(1180.0, 760.0))
         .antialiasing(true)
         .run()
@@ -32,6 +37,9 @@ enum Message {
     WidthChanged(String),
     HeightChanged(String),
     Generate,
+    ToggleAutoPlay,
+    ThrottleChanged(bool),
+    AutoAdvance,
 }
 
 #[derive(Debug)]
@@ -42,6 +50,8 @@ struct TraceViewer {
     width_input: String,
     height_input: String,
     status: String,
+    is_playing: bool,
+    is_throttled: bool,
 }
 
 impl TraceViewer {
@@ -55,6 +65,8 @@ impl TraceViewer {
             width_input: String::from("6"),
             height_input: String::from("6"),
             status: String::from("6 x 6 puzzle ready"),
+            is_playing: false,
+            is_throttled: false,
         }
     }
 
@@ -85,13 +97,58 @@ fn update(viewer: &mut TraceViewer, message: Message) {
                     viewer.steps = steps;
                     viewer.step_index = 0;
                     viewer.status = format!("{width} x {height} puzzle ready");
+                    viewer.is_playing = false;
                 }
                 Err(error) => {
                     viewer.status = error;
+                    viewer.is_playing = false;
                 }
             },
-            Err(message) => viewer.status = message,
+            Err(message) => {
+                viewer.status = message;
+                viewer.is_playing = false;
+            }
         },
+        Message::ToggleAutoPlay => {
+            viewer.is_playing = !viewer.is_playing;
+            viewer.status = if viewer.is_playing {
+                String::from("auto play running")
+            } else {
+                String::from("auto play stopped")
+            };
+
+            if viewer.is_playing && !viewer.is_throttled {
+                solve_remaining_steps(viewer);
+            }
+        }
+        Message::ThrottleChanged(is_throttled) => {
+            viewer.is_throttled = is_throttled;
+            viewer.status = if is_throttled {
+                String::from("auto play throttled")
+            } else {
+                String::from("auto play unthrottled")
+            };
+
+            if viewer.is_playing && !viewer.is_throttled {
+                solve_remaining_steps(viewer);
+            }
+        }
+        Message::AutoAdvance => {
+            if viewer.is_playing && viewer.is_throttled {
+                advance_to_next_step(viewer);
+                if viewer.solver.is_none() && viewer.step_index == viewer.last_index() {
+                    viewer.is_playing = false;
+                }
+            }
+        }
+    }
+}
+
+fn subscription(viewer: &TraceViewer) -> Subscription<Message> {
+    if viewer.is_playing && viewer.is_throttled {
+        time::every(Duration::from_millis(250)).map(|_| Message::AutoAdvance)
+    } else {
+        Subscription::none()
     }
 }
 
@@ -129,6 +186,15 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         button("First").on_press(Message::First),
         button("Previous").on_press(Message::Previous),
         button("Execute step").on_press(Message::Next),
+        button(if viewer.is_playing {
+            "Stop"
+        } else {
+            "Auto play"
+        })
+        .on_press(Message::ToggleAutoPlay),
+        checkbox(viewer.is_throttled)
+            .label("Throttle")
+            .on_toggle(Message::ThrottleChanged),
         button("Last").on_press(Message::Last),
         slider(
             0..=viewer.last_index() as u32,
@@ -383,6 +449,14 @@ fn advance_to_next_step(viewer: &mut TraceViewer) {
             viewer.status = status;
         }
     }
+}
+
+fn solve_remaining_steps(viewer: &mut TraceViewer) {
+    while viewer.solver.is_some() {
+        advance_to_next_step(viewer);
+    }
+
+    viewer.is_playing = false;
 }
 
 fn start_solver(width: usize, height: usize) -> Result<(PuzzleSolver, Vec<SolveStep>), String> {
