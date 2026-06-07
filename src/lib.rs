@@ -124,28 +124,33 @@ impl Polyomino {
     }
 
     pub fn try_join(&self, other: &Polyomino) -> Option<Polyomino> {
-        for rotated in other.rotations() {
-            for (self_point, self_piece) in &self.cells {
-                for (other_point, other_piece) in &rotated.cells {
-                    for direction in Direction::ALL {
-                        if self_piece.side(direction) != other_piece.side(direction.opposite()) {
-                            continue;
-                        }
-
-                        let offset = Point::new(
-                            self_point.x + direction.delta().x - other_point.x,
-                            self_point.y + direction.delta().y - other_point.y,
-                        );
-
-                        if let Some(joined) = self.join_translated(&rotated, offset) {
-                            return Some(joined);
-                        }
-                    }
-                }
-            }
-        }
-
-        None
+        other.rotations().into_iter().find_map(|rotated| {
+            self.cells
+                .iter()
+                .flat_map(|(self_point, self_piece)| {
+                    rotated
+                        .cells
+                        .iter()
+                        .flat_map(move |(other_point, other_piece)| {
+                            Direction::ALL.into_iter().map(move |direction| {
+                                (self_point, self_piece, other_point, other_piece, direction)
+                            })
+                        })
+                })
+                .filter_map(
+                    |(self_point, self_piece, other_point, other_piece, direction)| {
+                        (self_piece.side(direction) == other_piece.side(direction.opposite())).then(
+                            || {
+                                Point::new(
+                                    self_point.x + direction.delta().x - other_point.x,
+                                    self_point.y + direction.delta().y - other_point.y,
+                                )
+                            },
+                        )
+                    },
+                )
+                .find_map(|offset| self.join_translated(&rotated, offset))
+        })
     }
 
     pub fn to_grid(&self) -> Result<Vec<Vec<Piece>>, PuzzleError> {
@@ -164,34 +169,35 @@ impl Polyomino {
             .unwrap_or(0);
         let width = usize::try_from(max_x + 1).map_err(|_| PuzzleError::InvalidShape)?;
         let height = usize::try_from(max_y + 1).map_err(|_| PuzzleError::InvalidShape)?;
-        let mut grid = Vec::with_capacity(height);
 
-        for y in 0..height {
-            let mut row = Vec::with_capacity(width);
-            for x in 0..width {
-                let point = Point::new(x as i32, y as i32);
-                let piece = normalized
-                    .cells
-                    .get(&point)
-                    .ok_or(PuzzleError::ShapeContainsHoles)?;
-                row.push(piece.clone());
-            }
-            grid.push(row);
-        }
-
-        Ok(grid)
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| {
+                        normalized
+                            .cells
+                            .get(&Point::new(x as i32, y as i32))
+                            .cloned()
+                            .ok_or(PuzzleError::ShapeContainsHoles)
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     fn rotations(&self) -> Vec<Polyomino> {
-        let mut rotations = Vec::with_capacity(4);
-        let mut current = self.clone();
-        for _ in 0..4 {
-            if !rotations.iter().any(|existing| existing == &current) {
-                rotations.push(current.clone());
-            }
-            current = current.rotate_clockwise();
-        }
-        rotations
+        (0..4)
+            .scan(self.clone(), |current, _| {
+                let rotation = current.clone();
+                *current = current.rotate_clockwise();
+                Some(rotation)
+            })
+            .fold(Vec::with_capacity(4), |mut rotations, rotation| {
+                if !rotations.iter().any(|existing| existing == &rotation) {
+                    rotations.push(rotation);
+                }
+                rotations
+            })
     }
 
     fn rotate_clockwise(&self) -> Self {
@@ -204,15 +210,17 @@ impl Polyomino {
     }
 
     fn join_translated(&self, other: &Polyomino, offset: Point) -> Option<Polyomino> {
-        let mut cells = self.cells.clone();
-
-        for (point, piece) in &other.cells {
-            let translated = point.offset(offset);
-            if cells.contains_key(&translated) {
-                return None;
-            }
-            cells.insert(translated, piece.clone());
-        }
+        let cells =
+            other
+                .cells
+                .iter()
+                .try_fold(self.cells.clone(), |mut cells, (point, piece)| {
+                    let translated = point.offset(offset);
+                    (!cells.contains_key(&translated)).then(|| {
+                        cells.insert(translated, piece.clone());
+                        cells
+                    })
+                })?;
 
         if !all_touching_edges_match(&cells) {
             return None;
@@ -337,8 +345,8 @@ pub fn solve_puzzle(pieces: Vec<Piece>, seed: u64) -> Result<Vec<Vec<Piece>>, Pu
 }
 
 pub fn assert_grid_has_matching_neighbors(grid: &[Vec<Piece>]) {
-    for (y, row) in grid.iter().enumerate() {
-        for (x, piece) in row.iter().enumerate() {
+    grid.iter().enumerate().for_each(|(y, row)| {
+        row.iter().enumerate().for_each(|(x, piece)| {
             if x + 1 < row.len() {
                 assert_eq!(
                     piece.side(Direction::Right),
@@ -351,38 +359,39 @@ pub fn assert_grid_has_matching_neighbors(grid: &[Vec<Piece>]) {
                     grid[y + 1][x].side(Direction::Top)
                 );
             }
-        }
-    }
+        });
+    });
 }
 
 fn join_first_available_pair(polyominos: &mut Vec<Polyomino>) -> bool {
-    for first_index in 0..polyominos.len() {
-        for second_index in (first_index + 1)..polyominos.len() {
-            if let Some(joined) = polyominos[first_index].try_join(&polyominos[second_index]) {
-                polyominos.swap_remove(second_index);
-                polyominos.swap_remove(first_index);
-                polyominos.push(joined);
-                return true;
-            }
-        }
-    }
-
-    false
+    (0..polyominos.len())
+        .find_map(|first_index| {
+            ((first_index + 1)..polyominos.len()).find_map(|second_index| {
+                polyominos[first_index]
+                    .try_join(&polyominos[second_index])
+                    .map(|joined| (first_index, second_index, joined))
+            })
+        })
+        .is_some_and(|(first_index, second_index, joined)| {
+            polyominos.swap_remove(second_index);
+            polyominos.swap_remove(first_index);
+            polyominos.push(joined);
+            true
+        })
 }
 
 fn all_touching_edges_match(cells: &HashMap<Point, Piece>) -> bool {
-    for (point, piece) in cells {
-        for direction in [Direction::Right, Direction::Bottom] {
-            let neighbor_point = point.offset(direction.delta());
-            if let Some(neighbor) = cells.get(&neighbor_point) {
-                if piece.side(direction) != neighbor.side(direction.opposite()) {
-                    return false;
-                }
-            }
-        }
-    }
-
-    true
+    cells.iter().all(|(point, piece)| {
+        [Direction::Right, Direction::Bottom]
+            .into_iter()
+            .all(|direction| {
+                cells
+                    .get(&point.offset(direction.delta()))
+                    .is_none_or(|neighbor| {
+                        piece.side(direction) == neighbor.side(direction.opposite())
+                    })
+            })
+    })
 }
 
 struct SimpleRng {
@@ -522,16 +531,14 @@ mod tests {
         let mut pieces = pieces_from_grid(&grid);
         let mut rng = SimpleRng::new(42);
 
-        for piece in &mut pieces {
-            for _ in 0..rng.next_index(4) {
-                *piece = piece.rotate_clockwise();
-            }
-        }
+        pieces.iter_mut().for_each(|piece| {
+            *piece = (0..rng.next_index(4)).fold(piece.clone(), |piece, _| piece.rotate_clockwise())
+        });
 
-        for index in (1..pieces.len()).rev() {
+        (1..pieces.len()).rev().for_each(|index| {
             let swap_index = rng.next_index(index + 1);
             pieces.swap(index, swap_index);
-        }
+        });
 
         let solved = solve_puzzle(pieces, 1).expect("generated puzzle should solve");
 
