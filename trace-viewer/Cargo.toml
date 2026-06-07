@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14", features = ["canvas", "fira-sans", "tokio", "webgl"] }
+iced = { version = "0.14", features = ["canvas", "fira-sans", "image-without-codecs", "tokio", "webgl"] }
 jigsaw-simulation = { path = ".." }

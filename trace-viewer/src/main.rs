@@ -1,14 +1,17 @@
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 use std::time::Duration;
 
 use iced::Font;
 use iced::mouse;
 use iced::time;
+use iced::widget::image::Handle;
 use iced::widget::{
     button, canvas, checkbox, column, container, pick_list, row, slider, text, text_input,
 };
 use iced::{
     Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Subscription, Theme,
+    Vector,
 };
 use jigsaw_simulation::{
     Direction, FirstAgainstRestPickingStrategy, Piece, PuzzleSolver, RandomPickingStrategy,
@@ -18,6 +21,7 @@ use jigsaw_simulation::{
 const FAST_AUTOPLAY_INTERVAL: Duration = Duration::from_millis(16);
 const FAST_AUTOPLAY_STEPS_PER_TICK: usize = 64;
 const MAX_STORED_STEPS: usize = 1_000;
+const PUZZLE_IMAGE_SIZE: u32 = 1_024;
 const THROTTLED_AUTOPLAY_INTERVAL: Duration = Duration::from_millis(250);
 
 fn main() -> iced::Result {
@@ -56,6 +60,8 @@ struct TraceViewer {
     steps: Vec<SolveStep>,
     step_index: usize,
     first_stored_step_index: usize,
+    image: PuzzleImage,
+    image_tiles: HashMap<Piece, ImageTile>,
     width_input: String,
     height_input: String,
     strategy: SolverStrategy,
@@ -67,13 +73,15 @@ struct TraceViewer {
 impl TraceViewer {
     fn new() -> Self {
         let strategy = SolverStrategy::Random;
-        let (solver, steps) = start_solver(6, 6, strategy).expect("default trace should start");
+        let setup = start_solver(6, 6, strategy).expect("default trace should start");
 
         Self {
-            solver: Some(solver),
-            steps,
+            solver: Some(setup.solver),
+            steps: setup.steps,
             step_index: 0,
             first_stored_step_index: 0,
+            image: setup.image,
+            image_tiles: setup.image_tiles,
             width_input: String::from("6"),
             height_input: String::from("6"),
             strategy,
@@ -118,11 +126,13 @@ fn update(viewer: &mut TraceViewer, message: Message) {
         }
         Message::Generate => match requested_dimensions(viewer) {
             Ok((width, height)) => match start_solver(width, height, viewer.strategy) {
-                Ok((solver, steps)) => {
-                    viewer.solver = Some(solver);
-                    viewer.steps = steps;
+                Ok(setup) => {
+                    viewer.solver = Some(setup.solver);
+                    viewer.steps = setup.steps;
                     viewer.step_index = 0;
                     viewer.first_stored_step_index = 0;
+                    viewer.image = setup.image;
+                    viewer.image_tiles = setup.image_tiles;
                     viewer.status =
                         format!("{width} x {height} puzzle ready with {}", viewer.strategy);
                     viewer.is_playing = false;
@@ -238,6 +248,8 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
 
     let stage = canvas(TraceCanvas {
         step: current_step.clone(),
+        image: viewer.image.clone(),
+        image_tiles: viewer.image_tiles.clone(),
     })
     .width(Fill)
     .height(Fill);
@@ -271,6 +283,22 @@ impl Display for SolverStrategy {
 #[derive(Clone, Debug)]
 struct TraceCanvas {
     step: SolveStep,
+    image: PuzzleImage,
+    image_tiles: HashMap<Piece, ImageTile>,
+}
+
+#[derive(Clone, Debug)]
+struct PuzzleImage {
+    handle: Handle,
+    cols: usize,
+    rows: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ImageTile {
+    col: usize,
+    row: usize,
+    clockwise_rotations: u8,
 }
 
 impl<Message> canvas::Program<Message> for TraceCanvas {
@@ -291,7 +319,14 @@ impl<Message> canvas::Program<Message> for TraceCanvas {
         let layout = layout_polyominos(&self.step.polyominos, bounds.width);
 
         layout.iter().for_each(|entry| {
-            draw_polyomino(&mut frame, entry.polyomino, entry.origin, entry.cell_size);
+            draw_polyomino(
+                &mut frame,
+                entry.polyomino,
+                entry.origin,
+                entry.cell_size,
+                &self.image,
+                &self.image_tiles,
+            );
         });
 
         vec![frame.into_geometry()]
@@ -339,13 +374,20 @@ fn draw_polyomino(
     polyomino: &TracePolyomino,
     origin: CanvasPoint,
     cell_size: f32,
+    image: &PuzzleImage,
+    image_tiles: &HashMap<Piece, ImageTile>,
 ) {
     polyomino.cells.iter().for_each(|cell| {
         let x = origin.x + cell.point.x as f32 * cell_size;
         let y = origin.y + cell.point.y as f32 * cell_size;
         let size = cell_size - 2.0;
         let rect = canvas::Path::rectangle(CanvasPoint::new(x, y), Size::new(size, size));
-        frame.fill(&rect, Color::from_rgb8(202, 206, 211));
+
+        if let Some(tile) = image_tiles.get(&cell.piece) {
+            draw_image_tile(frame, image, *tile, CanvasPoint::new(x, y), size);
+        } else {
+            frame.fill(&rect, Color::from_rgb8(202, 206, 211));
+        }
 
         draw_side_colors(frame, &cell.piece, CanvasPoint::new(x, y), size);
 
@@ -358,8 +400,37 @@ fn draw_polyomino(
     });
 }
 
+fn draw_image_tile(
+    frame: &mut canvas::Frame,
+    image: &PuzzleImage,
+    tile: ImageTile,
+    origin: CanvasPoint,
+    size: f32,
+) {
+    let clip = Rectangle::new(origin, Size::new(size, size));
+    let full_width = image.cols as f32 * size;
+    let full_height = image.rows as f32 * size;
+    let full_origin = CanvasPoint::new(
+        origin.x - tile.col as f32 * size,
+        origin.y - tile.row as f32 * size,
+    );
+
+    frame.with_clip(clip, |frame| {
+        frame.with_save(|frame| {
+            let center = Vector::new(origin.x + size / 2.0, origin.y + size / 2.0);
+            frame.translate(center);
+            frame.rotate(std::f32::consts::FRAC_PI_2 * tile.clockwise_rotations as f32);
+            frame.translate(Vector::new(-center.x, -center.y));
+            frame.draw_image(
+                Rectangle::new(full_origin, Size::new(full_width, full_height)),
+                &image.handle,
+            );
+        });
+    });
+}
+
 fn draw_side_colors(frame: &mut canvas::Frame, piece: &Piece, origin: CanvasPoint, size: f32) {
-    let thickness = (size * 0.22).clamp(2.0, 7.0);
+    let thickness = (size * 0.14).clamp(1.5, 5.0);
 
     [
         (Direction::Top, origin, Size::new(size, thickness)),
@@ -378,7 +449,8 @@ fn draw_side_colors(frame: &mut canvas::Frame, piece: &Piece, origin: CanvasPoin
     .into_iter()
     .for_each(|(direction, origin, size)| {
         let edge = canvas::Path::rectangle(origin, size);
-        frame.fill(&edge, color_for_side(piece.side(direction)));
+        let color = color_for_side(piece.side(direction));
+        frame.fill(&edge, Color::from_rgba(color.r, color.g, color.b, 0.58));
     });
 }
 
@@ -530,27 +602,38 @@ fn advance_autoplay(viewer: &mut TraceViewer) {
     }
 }
 
+#[derive(Debug)]
+struct PuzzleSetup {
+    solver: PuzzleSolver,
+    steps: Vec<SolveStep>,
+    image: PuzzleImage,
+    image_tiles: HashMap<Piece, ImageTile>,
+}
+
 fn start_solver(
     width: usize,
     height: usize,
     strategy: SolverStrategy,
-) -> Result<(PuzzleSolver, Vec<SolveStep>), String> {
-    let mut solver = build_solver(width, height, strategy)
+) -> Result<PuzzleSetup, String> {
+    let mut setup = build_puzzle(width, height, strategy)
         .map_err(|error| format!("could not start puzzle solver: {error:?}"))?;
-    let first_step = solver
+    let first_step = setup
+        .solver
         .next()
         .ok_or_else(|| String::from("solver did not produce an initial step"))?
         .map_err(|error| format!("could not start puzzle solver: {error:?}"))?;
+    setup.steps.push(first_step);
 
-    Ok((solver, vec![first_step]))
+    Ok(setup)
 }
 
-fn build_solver(
+fn build_puzzle(
     width: usize,
     height: usize,
     strategy: SolverStrategy,
-) -> Result<PuzzleSolver, jigsaw_simulation::PuzzleError> {
+) -> Result<PuzzleSetup, jigsaw_simulation::PuzzleError> {
     let grid = generate_guid_grid(width, height);
+    let image_tiles = image_tile_lookup(&grid);
     let mut pieces = pieces_from_grid(&grid);
     let mut rng = ViewerRng::new((width as u64) << 32 | height as u64);
 
@@ -563,14 +646,109 @@ fn build_solver(
         pieces.swap(index, swap_index);
     });
 
-    match strategy {
+    let solver = match strategy {
         SolverStrategy::Random => {
             PuzzleSolver::with_picking_strategy(pieces, RandomPickingStrategy::new(9))
         }
         SolverStrategy::FirstAgainstRest => {
             PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
         }
-    }
+    }?;
+
+    Ok(PuzzleSetup {
+        solver,
+        steps: Vec::new(),
+        image: PuzzleImage {
+            handle: generated_puzzle_image(),
+            cols: width,
+            rows: height,
+        },
+        image_tiles,
+    })
+}
+
+fn image_tile_lookup(grid: &[Vec<Piece>]) -> HashMap<Piece, ImageTile> {
+    grid.iter()
+        .enumerate()
+        .flat_map(|(row, pieces)| {
+            pieces.iter().enumerate().flat_map(move |(col, piece)| {
+                (0..4).scan(piece.clone(), move |piece, clockwise_rotations| {
+                    let rotated = piece.clone();
+                    *piece = piece.rotate_clockwise();
+                    Some((
+                        rotated,
+                        ImageTile {
+                            col,
+                            row,
+                            clockwise_rotations,
+                        },
+                    ))
+                })
+            })
+        })
+        .collect()
+}
+
+fn generated_puzzle_image() -> Handle {
+    let width = PUZZLE_IMAGE_SIZE;
+    let height = PUZZLE_IMAGE_SIZE;
+    let pixels = (0..height)
+        .flat_map(|y| (0..width).flat_map(move |x| landscape_pixel(x, y, width, height)))
+        .collect::<Vec<_>>();
+
+    Handle::from_rgba(width, height, pixels)
+}
+
+fn landscape_pixel(x: u32, y: u32, width: u32, height: u32) -> [u8; 4] {
+    let fx = x as f32 / (width - 1) as f32;
+    let fy = y as f32 / (height - 1) as f32;
+    let texture = (((x.wrapping_mul(37) ^ y.wrapping_mul(19)) & 0xff) as f32 / 255.0 - 0.5) * 10.0;
+
+    let (mut r, mut g, mut b) = if fy < 0.48 {
+        let t = fy / 0.48;
+        (42.0 + 72.0 * t, 118.0 + 78.0 * t, 190.0 + 40.0 * t)
+    } else if fy < mountain_height(fx, 0.50, 0.10) {
+        let shade = (1.0 - fy).clamp(0.0, 1.0);
+        (
+            62.0 + 50.0 * shade,
+            82.0 + 48.0 * shade,
+            88.0 + 42.0 * shade,
+        )
+    } else if fy < mountain_height(fx, 0.62, 0.08) {
+        let shade = (1.0 - fy).clamp(0.0, 1.0);
+        (
+            46.0 + 38.0 * shade,
+            92.0 + 62.0 * shade,
+            82.0 + 36.0 * shade,
+        )
+    } else {
+        let wave = ((fx * 34.0).sin() + (fy * 48.0).cos()) * 9.0;
+        (32.0 + wave, 104.0 + wave, 142.0 + wave * 0.6)
+    };
+
+    let sun_dx = fx - 0.76;
+    let sun_dy = fy - 0.22;
+    let sun = (1.0 - ((sun_dx * sun_dx + sun_dy * sun_dy).sqrt() / 0.18)).clamp(0.0, 1.0);
+    r += 130.0 * sun;
+    g += 88.0 * sun;
+    b += 18.0 * sun;
+
+    let foreground = (fy - 0.72).max(0.0) / 0.28;
+    r += foreground * (42.0 + texture);
+    g += foreground * (34.0 + texture);
+    b += foreground * (18.0 + texture);
+
+    [
+        (r + texture).clamp(0.0, 255.0) as u8,
+        (g + texture).clamp(0.0, 255.0) as u8,
+        (b + texture).clamp(0.0, 255.0) as u8,
+        255,
+    ]
+}
+
+fn mountain_height(x: f32, base: f32, amplitude: f32) -> f32 {
+    base + amplitude * (x * std::f32::consts::TAU * 1.6).sin()
+        + amplitude * 0.55 * (x * std::f32::consts::TAU * 4.3).cos()
 }
 
 #[derive(Debug)]
