@@ -516,13 +516,27 @@ mod tests {
 
     #[test]
     fn solves_generated_grid_back_into_a_complete_piece_grid() {
-        let grid = generate_guid_grid(3, 2);
-        let pieces = pieces_from_grid(&grid);
+        let rows = 10;
+        let cols = 10;
+        let grid = generate_guid_grid(rows, cols);
+        let mut pieces = pieces_from_grid(&grid);
+        let mut rng = SimpleRng::new(42);
+
+        for piece in &mut pieces {
+            for _ in 0..rng.next_index(4) {
+                *piece = piece.rotate_clockwise();
+            }
+        }
+
+        for index in (1..pieces.len()).rev() {
+            let swap_index = rng.next_index(index + 1);
+            pieces.swap(index, swap_index);
+        }
 
         let solved = solve_puzzle(pieces, 1).expect("generated puzzle should solve");
 
         assert_grid_has_matching_neighbors(&solved);
-        assert_eq!(solved.len(), 2);
-        assert_eq!(solved[0].len(), 3);
+        assert_eq!(solved.len(), rows);
+        assert_eq!(solved[0].len(), cols);
     }
 }
