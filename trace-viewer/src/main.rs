@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use iced::mouse;
-use iced::widget::{button, canvas, column, container, row, slider, text};
+use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
 use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
 use jigsaw_simulation::{
     Direction, Piece, SolveStep, SolveTrace, TraceAction, TracePolyomino, generate_guid_grid,
@@ -27,19 +27,28 @@ enum Message {
     First,
     Last,
     StepChanged(u32),
+    WidthChanged(String),
+    HeightChanged(String),
+    Generate,
 }
 
 #[derive(Debug)]
 struct TraceViewer {
     trace: SolveTrace,
     step_index: usize,
+    width_input: String,
+    height_input: String,
+    status: String,
 }
 
 impl TraceViewer {
     fn new() -> Self {
         Self {
-            trace: sample_trace(),
+            trace: build_trace(6, 6).expect("default trace should solve"),
             step_index: 0,
+            width_input: String::from("6"),
+            height_input: String::from("6"),
+            status: String::from("6 x 6 puzzle"),
         }
     }
 
@@ -61,6 +70,21 @@ fn update(viewer: &mut TraceViewer, message: Message) {
         Message::StepChanged(step_index) => {
             viewer.step_index = (step_index as usize).min(viewer.last_index())
         }
+        Message::WidthChanged(width) => viewer.width_input = width,
+        Message::HeightChanged(height) => viewer.height_input = height,
+        Message::Generate => match requested_dimensions(viewer) {
+            Ok((width, height)) => match build_trace(width, height) {
+                Ok(trace) => {
+                    viewer.trace = trace;
+                    viewer.step_index = 0;
+                    viewer.status = format!("{width} x {height} puzzle");
+                }
+                Err(error) => {
+                    viewer.status = format!("could not solve puzzle: {error:?}");
+                }
+            },
+            Err(message) => viewer.status = message,
+        },
     }
 }
 
@@ -77,6 +101,21 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         text(action_label(&current_step.action)).size(18),
     ]
     .spacing(18)
+    .align_y(iced::Alignment::Center);
+
+    let generator = row![
+        text("Width"),
+        text_input("width", &viewer.width_input)
+            .on_input(Message::WidthChanged)
+            .width(80),
+        text("Height"),
+        text_input("height", &viewer.height_input)
+            .on_input(Message::HeightChanged)
+            .width(80),
+        button("Generate").on_press(Message::Generate),
+        text(&viewer.status),
+    ]
+    .spacing(10)
     .align_y(iced::Alignment::Center);
 
     let controls = row![
@@ -100,7 +139,7 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
     .width(Fill)
     .height(Fill);
 
-    container(column![header, controls, stage].spacing(14))
+    container(column![header, generator, controls, stage].spacing(14))
         .padding(18)
         .width(Fill)
         .height(Fill)
@@ -284,10 +323,32 @@ fn action_label(action: &TraceAction) -> String {
     }
 }
 
-fn sample_trace() -> SolveTrace {
-    let grid = generate_guid_grid(6, 6);
+fn requested_dimensions(viewer: &TraceViewer) -> Result<(usize, usize), String> {
+    let width: usize = viewer
+        .width_input
+        .trim()
+        .parse()
+        .map_err(|_| String::from("width must be a positive number"))?;
+    let height: usize = viewer
+        .height_input
+        .trim()
+        .parse()
+        .map_err(|_| String::from("height must be a positive number"))?;
+
+    match (width, height) {
+        (0, _) => Err(String::from("width must be at least 1")),
+        (_, 0) => Err(String::from("height must be at least 1")),
+        (width, height) if width.saturating_mul(height) > 10000 => {
+            Err(String::from("keep puzzles at 10000 pieces or fewer"))
+        }
+        dimensions => Ok(dimensions),
+    }
+}
+
+fn build_trace(width: usize, height: usize) -> Result<SolveTrace, jigsaw_simulation::PuzzleError> {
+    let grid = generate_guid_grid(width, height);
     let mut pieces = pieces_from_grid(&grid);
-    let mut rng = ViewerRng::new(42);
+    let mut rng = ViewerRng::new((width as u64) << 32 | height as u64);
 
     pieces.iter_mut().for_each(|piece| {
         *piece = (0..rng.next_index(4)).fold(piece.clone(), |piece, _| piece.rotate_clockwise())
@@ -298,9 +359,7 @@ fn sample_trace() -> SolveTrace {
         pieces.swap(index, swap_index);
     });
 
-    solve_puzzle_with_trace(pieces, 9)
-        .expect("sample trace should solve")
-        .1
+    solve_puzzle_with_trace(pieces, 9).map(|(_, trace)| trace)
 }
 
 #[derive(Debug)]
