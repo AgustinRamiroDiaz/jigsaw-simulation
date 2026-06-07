@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use iced::Font;
 use iced::mouse;
 use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
 use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
@@ -10,6 +11,7 @@ use jigsaw_simulation::{
 
 fn main() -> iced::Result {
     iced::application(TraceViewer::new, update, view)
+        .default_font(Font::DEFAULT)
         .title(title)
         .window_size(Size::new(1180.0, 760.0))
         .antialiasing(true)
