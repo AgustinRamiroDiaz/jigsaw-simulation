@@ -10,8 +10,8 @@ use iced::widget::{
     button, canvas, checkbox, column, container, pick_list, row, slider, text, text_input,
 };
 use iced::{
-    Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Subscription, Theme,
-    Vector,
+    Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Subscription, Task,
+    Theme, Vector,
 };
 use jigsaw_simulation::{
     Direction, FirstAgainstRestPickingStrategy, Piece, PuzzleSolver, RandomPickingStrategy,
@@ -48,6 +48,8 @@ enum Message {
     WidthChanged(String),
     HeightChanged(String),
     StrategyChanged(SolverStrategy),
+    ChooseImage,
+    ImageSelected(Result<UploadedImage, String>),
     Generate,
     ToggleAutoPlay,
     ThrottleChanged(bool),
@@ -68,12 +70,13 @@ struct TraceViewer {
     status: String,
     is_playing: bool,
     is_throttled: bool,
+    selected_image: Option<UploadedImage>,
 }
 
 impl TraceViewer {
     fn new() -> Self {
         let strategy = SolverStrategy::Random;
-        let setup = start_solver(6, 6, strategy).expect("default trace should start");
+        let setup = start_solver(6, 6, strategy, None).expect("default trace should start");
 
         Self {
             solver: Some(setup.solver),
@@ -88,6 +91,7 @@ impl TraceViewer {
             status: String::from("6 x 6 puzzle ready"),
             is_playing: false,
             is_throttled: false,
+            selected_image: None,
         }
     }
 
@@ -108,7 +112,7 @@ impl TraceViewer {
     }
 }
 
-fn update(viewer: &mut TraceViewer, message: Message) {
+fn update(viewer: &mut TraceViewer, message: Message) -> Task<Message> {
     match message {
         Message::Previous => viewer.step_index = viewer.step_index.saturating_sub(1),
         Message::Next => advance_to_next_step(viewer),
@@ -124,8 +128,31 @@ fn update(viewer: &mut TraceViewer, message: Message) {
             viewer.is_playing = false;
             viewer.status = format!("strategy: {strategy}");
         }
+        Message::ChooseImage => {
+            viewer.is_playing = false;
+            viewer.status = String::from("choosing image...");
+            return Task::perform(choose_image_file(), Message::ImageSelected);
+        }
+        Message::ImageSelected(result) => {
+            viewer.is_playing = false;
+            match result {
+                Ok(image) => {
+                    viewer.status = format!(
+                        "selected image: {} ({} x {})",
+                        image.name, image.width, image.height
+                    );
+                    viewer.selected_image = Some(image);
+                }
+                Err(error) => viewer.status = error,
+            }
+        }
         Message::Generate => match requested_dimensions(viewer) {
-            Ok((width, height)) => match start_solver(width, height, viewer.strategy) {
+            Ok((width, height)) => match start_solver(
+                width,
+                height,
+                viewer.strategy,
+                viewer.selected_image.as_ref(),
+            ) {
                 Ok(setup) => {
                     viewer.solver = Some(setup.solver);
                     viewer.steps = setup.steps;
@@ -169,6 +196,8 @@ fn update(viewer: &mut TraceViewer, message: Message) {
             }
         }
     }
+
+    Task::none()
 }
 
 fn subscription(viewer: &TraceViewer) -> Subscription<Message> {
@@ -216,6 +245,7 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
             Message::StrategyChanged
         )
         .width(190),
+        button("Choose image").on_press(Message::ChooseImage),
         button("Generate").on_press(Message::Generate),
         text(&viewer.status),
     ]
@@ -292,6 +322,14 @@ struct PuzzleImage {
     handle: Handle,
     cols: usize,
     rows: usize,
+}
+
+#[derive(Clone, Debug)]
+struct UploadedImage {
+    name: String,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -614,8 +652,9 @@ fn start_solver(
     width: usize,
     height: usize,
     strategy: SolverStrategy,
+    uploaded_image: Option<&UploadedImage>,
 ) -> Result<PuzzleSetup, String> {
-    let mut setup = build_puzzle(width, height, strategy)
+    let mut setup = build_puzzle(width, height, strategy, uploaded_image)
         .map_err(|error| format!("could not start puzzle solver: {error:?}"))?;
     let first_step = setup
         .solver
@@ -631,6 +670,7 @@ fn build_puzzle(
     width: usize,
     height: usize,
     strategy: SolverStrategy,
+    uploaded_image: Option<&UploadedImage>,
 ) -> Result<PuzzleSetup, jigsaw_simulation::PuzzleError> {
     let grid = generate_guid_grid(width, height);
     let image_tiles = image_tile_lookup(&grid);
@@ -659,7 +699,9 @@ fn build_puzzle(
         solver,
         steps: Vec::new(),
         image: PuzzleImage {
-            handle: generated_puzzle_image(),
+            handle: uploaded_image
+                .map(|image| uploaded_puzzle_image(image, width, height))
+                .unwrap_or_else(generated_puzzle_image),
             cols: width,
             rows: height,
         },
@@ -697,6 +739,158 @@ fn generated_puzzle_image() -> Handle {
         .collect::<Vec<_>>();
 
     Handle::from_rgba(width, height, pixels)
+}
+
+fn uploaded_puzzle_image(uploaded: &UploadedImage, cols: usize, rows: usize) -> Handle {
+    let source =
+        image::RgbaImage::from_raw(uploaded.width, uploaded.height, uploaded.pixels.clone())
+            .expect("uploaded image dimensions should match decoded RGBA pixels");
+    let (crop_x, crop_y, crop_width, crop_height) =
+        center_crop_rect(uploaded.width, uploaded.height, cols, rows);
+    let cropped =
+        image::imageops::crop_imm(&source, crop_x, crop_y, crop_width, crop_height).to_image();
+    let (target_width, target_height) = fitted_image_size(cols, rows);
+    let resized = image::imageops::resize(
+        &cropped,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Triangle,
+    );
+
+    Handle::from_rgba(target_width, target_height, resized.into_raw())
+}
+
+fn center_crop_rect(
+    source_width: u32,
+    source_height: u32,
+    cols: usize,
+    rows: usize,
+) -> (u32, u32, u32, u32) {
+    let source_ratio = source_width as f32 / source_height as f32;
+    let target_ratio = cols as f32 / rows as f32;
+
+    if source_ratio > target_ratio {
+        let crop_width =
+            ((source_height as f32 * target_ratio).round() as u32).clamp(1, source_width);
+        (
+            (source_width - crop_width) / 2,
+            0,
+            crop_width,
+            source_height,
+        )
+    } else {
+        let crop_height =
+            ((source_width as f32 / target_ratio).round() as u32).clamp(1, source_height);
+        (
+            0,
+            (source_height - crop_height) / 2,
+            source_width,
+            crop_height,
+        )
+    }
+}
+
+fn fitted_image_size(cols: usize, rows: usize) -> (u32, u32) {
+    if cols >= rows {
+        (
+            PUZZLE_IMAGE_SIZE,
+            ((PUZZLE_IMAGE_SIZE as f32 * rows as f32 / cols as f32).round() as u32).max(1),
+        )
+    } else {
+        (
+            ((PUZZLE_IMAGE_SIZE as f32 * cols as f32 / rows as f32).round() as u32).max(1),
+            PUZZLE_IMAGE_SIZE,
+        )
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn decode_uploaded_image(name: String, bytes: Vec<u8>) -> Result<UploadedImage, String> {
+    let decoded = image::load_from_memory(&bytes)
+        .map_err(|error| format!("could not decode selected image: {error}"))?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+
+    Ok(UploadedImage {
+        name,
+        width,
+        height,
+        pixels: rgba.into_raw(),
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn choose_image_file() -> Result<UploadedImage, String> {
+    use futures_channel::oneshot;
+    use js_sys::Uint8Array;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{HtmlElement, HtmlInputElement};
+
+    let window = web_sys::window().ok_or_else(|| String::from("browser window not available"))?;
+    let document = window
+        .document()
+        .ok_or_else(|| String::from("browser document not available"))?;
+    let input = document
+        .create_element("input")
+        .map_err(|_| String::from("could not create image picker"))?
+        .dyn_into::<HtmlInputElement>()
+        .map_err(|_| String::from("could not prepare image picker"))?;
+
+    input.set_type("file");
+    input.set_accept("image/png,image/jpeg,image/*");
+
+    let input_element = input
+        .clone()
+        .dyn_into::<HtmlElement>()
+        .map_err(|_| String::from("could not hide image picker"))?;
+    input_element.set_hidden(true);
+
+    if let Some(body) = document.body() {
+        body.append_child(&input)
+            .map_err(|_| String::from("could not attach image picker"))?;
+    }
+
+    let (sender, receiver) = oneshot::channel::<Result<web_sys::File, String>>();
+    let input_for_change = input.clone();
+    let on_change = Closure::<dyn FnMut(web_sys::Event)>::once(move |_| {
+        let selected_file = input_for_change
+            .files()
+            .and_then(|files| files.item(0))
+            .ok_or_else(|| String::from("no image selected"));
+        let _ = sender.send(selected_file);
+    });
+
+    input
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .map_err(|_| String::from("could not listen for selected image"))?;
+    on_change.forget();
+
+    input_element.click();
+
+    let file = receiver
+        .await
+        .map_err(|_| String::from("image picker was cancelled"))??;
+    let name = file.name();
+    let blob: web_sys::Blob = file.unchecked_into();
+    let array_buffer = JsFuture::from(blob.array_buffer())
+        .await
+        .map_err(|_| String::from("could not read selected image"))?;
+    let bytes = Uint8Array::new(&array_buffer).to_vec();
+
+    if let Some(parent) = input.parent_node() {
+        let _ = parent.remove_child(&input);
+    }
+
+    decode_uploaded_image(name, bytes)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn choose_image_file() -> Result<UploadedImage, String> {
+    Err(String::from(
+        "image upload is available in the web viewer for now",
+    ))
 }
 
 fn landscape_pixel(x: u32, y: u32, width: u32, height: u32) -> [u8; 4] {
