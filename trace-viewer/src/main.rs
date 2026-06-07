@@ -1,8 +1,10 @@
+use std::fmt::Debug;
+
 use iced::mouse;
 use iced::widget::{button, canvas, column, container, row, text};
 use iced::{Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Theme};
 use jigsaw_simulation::{
-    Piece, SolveStep, SolveTrace, TraceAction, TracePolyomino, generate_guid_grid,
+    Direction, Piece, SolveStep, SolveTrace, TraceAction, TracePolyomino, generate_guid_grid,
     pieces_from_grid, solve_puzzle_with_trace,
 };
 
@@ -169,17 +171,42 @@ fn draw_polyomino(
     polyomino.cells.iter().for_each(|cell| {
         let x = origin.x + cell.point.x as f32 * cell_size;
         let y = origin.y + cell.point.y as f32 * cell_size;
-        let rect = canvas::Path::rectangle(
-            CanvasPoint::new(x, y),
-            Size::new(cell_size - 2.0, cell_size - 2.0),
-        );
-        frame.fill(&rect, color_for_piece(&cell.piece));
+        let size = cell_size - 2.0;
+        let rect = canvas::Path::rectangle(CanvasPoint::new(x, y), Size::new(size, size));
+        frame.fill(&rect, Color::from_rgb8(202, 206, 211));
+
+        draw_side_colors(frame, &cell.piece, CanvasPoint::new(x, y), size);
+
         frame.stroke(
             &rect,
             canvas::Stroke::default()
                 .with_color(Color::from_rgb8(42, 48, 58))
                 .with_width(1.0),
         );
+    });
+}
+
+fn draw_side_colors(frame: &mut canvas::Frame, piece: &Piece, origin: CanvasPoint, size: f32) {
+    let thickness = (size * 0.22).clamp(2.0, 7.0);
+
+    [
+        (Direction::Top, origin, Size::new(size, thickness)),
+        (
+            Direction::Right,
+            CanvasPoint::new(origin.x + size - thickness, origin.y),
+            Size::new(thickness, size),
+        ),
+        (
+            Direction::Bottom,
+            CanvasPoint::new(origin.x, origin.y + size - thickness),
+            Size::new(size, thickness),
+        ),
+        (Direction::Left, origin, Size::new(thickness, size)),
+    ]
+    .into_iter()
+    .for_each(|(direction, origin, size)| {
+        let edge = canvas::Path::rectangle(origin, size);
+        frame.fill(&edge, color_for_side(piece.side(direction)));
     });
 }
 
@@ -203,15 +230,29 @@ fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
     )
 }
 
-fn color_for_piece(piece: &Piece) -> Color {
-    let hash = format!("{piece:?}").bytes().fold(0_u32, |hash, byte| {
+fn color_for_side(side: &impl Debug) -> Color {
+    let hash = format!("{side:?}").bytes().fold(0_u32, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(byte as u32)
     });
-    let r = 80 + (hash & 0x7f) as u8;
-    let g = 80 + ((hash >> 8) & 0x7f) as u8;
-    let b = 80 + ((hash >> 16) & 0x7f) as u8;
 
-    Color::from_rgb8(r, g, b)
+    hsl_to_rgb((hash % 360) as f32, 0.68, 0.56)
+}
+
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Color {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let hue_prime = hue / 60.0;
+    let x = chroma * (1.0 - (hue_prime % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match hue_prime as u8 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+
+    Color::from_rgb(r1 + m, g1 + m, b1 + m)
 }
 
 fn action_label(action: &TraceAction) -> String {
