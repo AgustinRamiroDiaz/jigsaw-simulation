@@ -79,6 +79,26 @@ runs the traced solver, and lets you step through the algorithm with:
 Each square is drawn as one puzzle piece. Each polyomino is laid out separately
 so you can watch the set shrink as successful joins occur.
 
+## Web Build
+
+The viewer can also be built for the web with Trunk:
+
+```bash
+trunk build trace-viewer/index.html --release --public-url "/jigsaw-simulation/"
+```
+
+For local development:
+
+```bash
+trunk serve trace-viewer/index.html
+```
+
+The project uses Iced 0.14 with the `webgl` feature for the WASM build. The
+older `iced_web` crate exists, but it targets the historical Iced 0.4 stack, so
+it is not used by this workspace.
+
+GitHub Pages publishing is handled by `.github/workflows/pages.yml`.
+
 ## Development
 
 Run the core tests:
