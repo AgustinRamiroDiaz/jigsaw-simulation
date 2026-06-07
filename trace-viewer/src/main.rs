@@ -15,6 +15,11 @@ use jigsaw_simulation::{
     SolveStep, TraceAction, TracePolyomino, generate_guid_grid, pieces_from_grid,
 };
 
+const FAST_AUTOPLAY_INTERVAL: Duration = Duration::from_millis(16);
+const FAST_AUTOPLAY_STEPS_PER_TICK: usize = 64;
+const MAX_STORED_STEPS: usize = 1_000;
+const THROTTLED_AUTOPLAY_INTERVAL: Duration = Duration::from_millis(250);
+
 fn main() -> iced::Result {
     iced::application(TraceViewer::new, update, view)
         .default_font(Font::DEFAULT)
@@ -50,6 +55,7 @@ struct TraceViewer {
     solver: Option<PuzzleSolver>,
     steps: Vec<SolveStep>,
     step_index: usize,
+    first_stored_step_index: usize,
     width_input: String,
     height_input: String,
     strategy: SolverStrategy,
@@ -67,6 +73,7 @@ impl TraceViewer {
             solver: Some(solver),
             steps,
             step_index: 0,
+            first_stored_step_index: 0,
             width_input: String::from("6"),
             height_input: String::from("6"),
             strategy,
@@ -82,6 +89,14 @@ impl TraceViewer {
 
     fn last_index(&self) -> usize {
         self.steps.len().saturating_sub(1)
+    }
+
+    fn absolute_step_index(&self) -> usize {
+        self.first_stored_step_index + self.step_index
+    }
+
+    fn last_absolute_step_index(&self) -> usize {
+        self.first_stored_step_index + self.last_index()
     }
 }
 
@@ -107,6 +122,7 @@ fn update(viewer: &mut TraceViewer, message: Message) {
                     viewer.solver = Some(solver);
                     viewer.steps = steps;
                     viewer.step_index = 0;
+                    viewer.first_stored_step_index = 0;
                     viewer.status =
                         format!("{width} x {height} puzzle ready with {}", viewer.strategy);
                     viewer.is_playing = false;
@@ -128,10 +144,6 @@ fn update(viewer: &mut TraceViewer, message: Message) {
             } else {
                 String::from("auto play stopped")
             };
-
-            if viewer.is_playing && !viewer.is_throttled {
-                solve_remaining_steps(viewer);
-            }
         }
         Message::ThrottleChanged(is_throttled) => {
             viewer.is_throttled = is_throttled;
@@ -140,28 +152,27 @@ fn update(viewer: &mut TraceViewer, message: Message) {
             } else {
                 String::from("auto play unthrottled")
             };
-
-            if viewer.is_playing && !viewer.is_throttled {
-                solve_remaining_steps(viewer);
-            }
         }
         Message::AutoAdvance => {
-            if viewer.is_playing && viewer.is_throttled {
-                advance_to_next_step(viewer);
-                if viewer.solver.is_none() && viewer.step_index == viewer.last_index() {
-                    viewer.is_playing = false;
-                }
+            if viewer.is_playing {
+                advance_autoplay(viewer);
             }
         }
     }
 }
 
 fn subscription(viewer: &TraceViewer) -> Subscription<Message> {
-    if viewer.is_playing && viewer.is_throttled {
-        time::every(Duration::from_millis(250)).map(|_| Message::AutoAdvance)
-    } else {
-        Subscription::none()
+    if !viewer.is_playing {
+        return Subscription::none();
     }
+
+    let interval = if viewer.is_throttled {
+        THROTTLED_AUTOPLAY_INTERVAL
+    } else {
+        FAST_AUTOPLAY_INTERVAL
+    };
+
+    time::every(interval).map(|_| Message::AutoAdvance)
 }
 
 fn view(viewer: &TraceViewer) -> Element<'_, Message> {
@@ -170,8 +181,8 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         text("Jigsaw trace").size(28),
         text(format!(
             "step {} of {} executed",
-            viewer.step_index,
-            viewer.last_index()
+            viewer.absolute_step_index(),
+            viewer.last_absolute_step_index()
         ))
         .size(18),
         text(action_label(&current_step.action)).size(18),
@@ -469,9 +480,9 @@ fn advance_to_next_step(viewer: &mut TraceViewer) {
 
     match solver.next() {
         Some(Ok(step)) => {
-            viewer.steps.push(step);
+            push_step(viewer, step);
             viewer.step_index = viewer.last_index();
-            viewer.status = format!("executed step {}", viewer.step_index);
+            viewer.status = format!("executed step {}", viewer.absolute_step_index());
         }
         Some(Err(error)) => {
             viewer.solver = None;
@@ -489,12 +500,34 @@ fn advance_to_next_step(viewer: &mut TraceViewer) {
     }
 }
 
-fn solve_remaining_steps(viewer: &mut TraceViewer) {
-    while viewer.solver.is_some() {
-        advance_to_next_step(viewer);
+fn push_step(viewer: &mut TraceViewer, step: SolveStep) {
+    viewer.steps.push(step);
+
+    if viewer.steps.len() <= MAX_STORED_STEPS {
+        return;
     }
 
-    viewer.is_playing = false;
+    viewer.steps.remove(0);
+    viewer.first_stored_step_index += 1;
+    viewer.step_index = viewer.step_index.saturating_sub(1);
+}
+
+fn advance_autoplay(viewer: &mut TraceViewer) {
+    let steps_per_tick = if viewer.is_throttled {
+        1
+    } else {
+        FAST_AUTOPLAY_STEPS_PER_TICK
+    };
+
+    (0..steps_per_tick).for_each(|_| {
+        if viewer.solver.is_some() {
+            advance_to_next_step(viewer);
+        }
+    });
+
+    if viewer.solver.is_none() && viewer.step_index == viewer.last_index() {
+        viewer.is_playing = false;
+    }
 }
 
 fn start_solver(
