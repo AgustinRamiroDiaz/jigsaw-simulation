@@ -187,6 +187,132 @@ fn puzzle_solver_solution_is_available_after_completion() {
 }
 
 #[test]
+fn first_against_rest_strategy_tracks_next_candidate() {
+    let mut strategy = FirstAgainstRestPickingStrategy::new();
+
+    assert_eq!(strategy.pick(4), Some((0, 1)));
+    assert_eq!(strategy.pick(4), Some((0, 2)));
+    assert_eq!(strategy.pick(4), Some((0, 3)));
+    assert_eq!(strategy.pick(4), Some((0, 1)));
+    assert_eq!(strategy.pick(2), Some((0, 1)));
+    assert_eq!(strategy.pick(1), None);
+}
+
+#[test]
+fn puzzle_solver_can_use_first_against_rest_strategy() {
+    let grid = generate_guid_grid(4, 3);
+    let pieces = pieces_from_grid(&grid);
+    let mut solver =
+        PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+            .expect("solver should initialize");
+
+    solver
+        .by_ref()
+        .try_for_each(|step| step.map(|_| ()))
+        .expect("iterator should solve");
+
+    let solved = solver
+        .solution()
+        .expect("solution should be available after iterator completes")
+        .expect("solution should be valid");
+
+    assert_grid_has_matching_neighbors(&solved);
+    assert_eq!(solved.len(), 3);
+    assert_eq!(solved[0].len(), 4);
+}
+
+#[test]
+fn first_against_rest_rejections_keep_the_first_polyomino_stable() {
+    let pieces = vec![
+        Piece::new([
+            side("a-top"),
+            side("a-right"),
+            side("a-bottom"),
+            side("a-left"),
+        ]),
+        Piece::new([
+            side("b-top"),
+            side("b-right"),
+            side("b-bottom"),
+            side("b-left"),
+        ]),
+        Piece::new([
+            side("c-top"),
+            side("c-right"),
+            side("c-bottom"),
+            side("c-left"),
+        ]),
+    ];
+    let mut solver =
+        PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+            .expect("solver should initialize");
+
+    let initial = solver
+        .next()
+        .expect("solver should yield initial step")
+        .expect("initial step should succeed");
+    let first_rejection = solver
+        .next()
+        .expect("solver should yield first attempt")
+        .expect("first rejection should succeed");
+    let second_rejection = solver
+        .next()
+        .expect("solver should yield second attempt")
+        .expect("second rejection should succeed");
+
+    assert!(matches!(
+        first_rejection.action,
+        TraceAction::Rejected {
+            first_index: 0,
+            second_index: 1
+        }
+    ));
+    assert!(matches!(
+        second_rejection.action,
+        TraceAction::Rejected {
+            first_index: 0,
+            second_index: 2
+        }
+    ));
+    assert_eq!(first_rejection.polyominos, initial.polyominos);
+    assert_eq!(second_rejection.polyominos, initial.polyominos);
+}
+
+#[test]
+fn first_against_rest_keeps_all_non_first_polyominos_as_single_pieces_on_large_grid() {
+    let grid = generate_guid_grid(10, 10);
+    let pieces = pieces_from_grid(&grid);
+    let mut solver =
+        PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+            .expect("solver should initialize");
+
+    solver
+        .by_ref()
+        .try_for_each(|step| {
+            let step = step?;
+            assert!(
+                step.polyominos
+                    .iter()
+                    .skip(1)
+                    .all(|polyomino| polyomino.cells.len() == 1),
+                "step {} should only grow the first polyomino",
+                step.attempt
+            );
+            Ok::<_, PuzzleError>(())
+        })
+        .expect("iterator should solve");
+
+    let solved = solver
+        .solution()
+        .expect("solution should be available after iterator completes")
+        .expect("solution should be valid");
+
+    assert_grid_has_matching_neighbors(&solved);
+    assert_eq!(solved.len(), 10);
+    assert_eq!(solved[0].len(), 10);
+}
+
+#[test]
 fn solving_with_trace_records_algorithm_snapshots() {
     let grid = generate_guid_grid(3, 2);
     let pieces = pieces_from_grid(&grid);

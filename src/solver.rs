@@ -4,9 +4,78 @@ use crate::{
 
 use crate::rng::SimpleRng;
 
+pub trait PickingStrategy: std::fmt::Debug {
+    fn pick(&mut self, polyomino_count: usize) -> Option<(usize, usize)>;
+}
+
+#[derive(Debug)]
+pub struct RandomPickingStrategy {
+    rng: SimpleRng,
+}
+
+impl RandomPickingStrategy {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rng: SimpleRng::new(seed),
+        }
+    }
+}
+
+impl PickingStrategy for RandomPickingStrategy {
+    fn pick(&mut self, polyomino_count: usize) -> Option<(usize, usize)> {
+        if polyomino_count < 2 {
+            return None;
+        }
+
+        let first_index = self.rng.next_index(polyomino_count);
+        let second_index = (0..(polyomino_count - 1))
+            .map(|offset| (first_index + 1 + offset) % polyomino_count)
+            .nth(self.rng.next_index(polyomino_count - 1))
+            .expect("there is at least one second polyomino");
+
+        Some((first_index, second_index))
+    }
+}
+
+#[derive(Debug)]
+pub struct FirstAgainstRestPickingStrategy {
+    next_second_index: usize,
+}
+
+impl FirstAgainstRestPickingStrategy {
+    pub fn new() -> Self {
+        Self {
+            next_second_index: 1,
+        }
+    }
+}
+
+impl Default for FirstAgainstRestPickingStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PickingStrategy for FirstAgainstRestPickingStrategy {
+    fn pick(&mut self, polyomino_count: usize) -> Option<(usize, usize)> {
+        if polyomino_count < 2 {
+            return None;
+        }
+
+        if self.next_second_index >= polyomino_count {
+            self.next_second_index = 1;
+        }
+
+        let second_index = self.next_second_index;
+        self.next_second_index += 1;
+
+        Some((0, second_index))
+    }
+}
+
 #[derive(Debug)]
 pub struct PuzzleSolver {
-    rng: SimpleRng,
+    picking_strategy: Box<dyn PickingStrategy>,
     polyominos: Vec<Polyomino>,
     failed_attempts: usize,
     attempts: usize,
@@ -24,6 +93,13 @@ enum SolverPhase {
 
 impl PuzzleSolver {
     pub fn new(pieces: Vec<Piece>, seed: u64) -> Result<Self, PuzzleError> {
+        Self::with_picking_strategy(pieces, RandomPickingStrategy::new(seed))
+    }
+
+    pub fn with_picking_strategy(
+        pieces: Vec<Piece>,
+        picking_strategy: impl PickingStrategy + 'static,
+    ) -> Result<Self, PuzzleError> {
         if pieces.is_empty() {
             return Err(PuzzleError::EmptyPuzzle);
         }
@@ -32,7 +108,7 @@ impl PuzzleSolver {
         let max_failed_attempts = polyominos.len().saturating_mul(polyominos.len()).max(16) * 128;
 
         Ok(Self {
-            rng: SimpleRng::new(seed),
+            picking_strategy: Box::new(picking_strategy),
             polyominos,
             failed_attempts: 0,
             attempts: 0,
@@ -60,14 +136,26 @@ impl PuzzleSolver {
             return Ok(None);
         }
 
-        let first_index = self.rng.next_index(self.polyominos.len());
-        let first = self.polyominos.swap_remove(first_index);
-        let second_index = self.rng.next_index(self.polyominos.len());
-        let second = self.polyominos.swap_remove(second_index);
+        let Some((first_index, second_index)) = self.picking_strategy.pick(self.polyominos.len())
+        else {
+            self.phase = SolverPhase::Failed(PuzzleError::CouldNotSolve);
+            return Err(PuzzleError::CouldNotSolve);
+        };
+
+        if first_index == second_index
+            || first_index >= self.polyominos.len()
+            || second_index >= self.polyominos.len()
+        {
+            self.phase = SolverPhase::Failed(PuzzleError::CouldNotSolve);
+            return Err(PuzzleError::CouldNotSolve);
+        }
+
+        let (first, second) = remove_pair(&mut self.polyominos, first_index, second_index);
         self.attempts += 1;
 
         if let Some(joined) = first.try_join(&second) {
-            self.polyominos.push(joined);
+            self.polyominos
+                .insert(joined_index(first_index, second_index), joined);
             self.failed_attempts = 0;
             return Ok(Some(trace_step(
                 self.attempts,
@@ -79,8 +167,13 @@ impl PuzzleSolver {
             )));
         }
 
-        self.polyominos.push(first);
-        self.polyominos.push(second);
+        restore_pair(
+            &mut self.polyominos,
+            first_index,
+            first,
+            second_index,
+            second,
+        );
         self.failed_attempts += 1;
         let rejected = trace_step(
             self.attempts,
@@ -231,11 +324,42 @@ fn join_first_available_pair(polyominos: &mut Vec<Polyomino>) -> Option<(usize, 
             })
         })
         .map(|(first_index, second_index, joined)| {
-            polyominos.swap_remove(second_index);
-            polyominos.swap_remove(first_index);
-            polyominos.push(joined);
+            remove_pair(polyominos, first_index, second_index);
+            polyominos.insert(joined_index(first_index, second_index), joined);
             (first_index, second_index)
         })
+}
+
+fn remove_pair<T>(items: &mut Vec<T>, first_index: usize, second_index: usize) -> (T, T) {
+    if first_index > second_index {
+        let first = items.remove(first_index);
+        let second = items.remove(second_index);
+        (first, second)
+    } else {
+        let second = items.remove(second_index);
+        let first = items.remove(first_index);
+        (first, second)
+    }
+}
+
+fn restore_pair<T>(
+    items: &mut Vec<T>,
+    first_index: usize,
+    first: T,
+    second_index: usize,
+    second: T,
+) {
+    if first_index > second_index {
+        items.insert(second_index, second);
+        items.insert(first_index, first);
+    } else {
+        items.insert(first_index, first);
+        items.insert(second_index, second);
+    }
+}
+
+fn joined_index(first_index: usize, second_index: usize) -> usize {
+    first_index - usize::from(second_index < first_index)
 }
 
 fn trace_step(attempt: usize, action: TraceAction, polyominos: &[Polyomino]) -> SolveStep {

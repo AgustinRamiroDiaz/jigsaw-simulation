@@ -1,16 +1,18 @@
-use std::fmt::Debug;
+use std::fmt::{self, Debug, Display};
 use std::time::Duration;
 
 use iced::Font;
 use iced::mouse;
 use iced::time;
-use iced::widget::{button, canvas, checkbox, column, container, row, slider, text, text_input};
+use iced::widget::{
+    button, canvas, checkbox, column, container, pick_list, row, slider, text, text_input,
+};
 use iced::{
     Color, Element, Fill, Point as CanvasPoint, Rectangle, Renderer, Size, Subscription, Theme,
 };
 use jigsaw_simulation::{
-    Direction, Piece, PuzzleSolver, SolveStep, TraceAction, TracePolyomino, generate_guid_grid,
-    pieces_from_grid,
+    Direction, FirstAgainstRestPickingStrategy, Piece, PuzzleSolver, RandomPickingStrategy,
+    SolveStep, TraceAction, TracePolyomino, generate_guid_grid, pieces_from_grid,
 };
 
 fn main() -> iced::Result {
@@ -36,6 +38,7 @@ enum Message {
     StepChanged(u32),
     WidthChanged(String),
     HeightChanged(String),
+    StrategyChanged(SolverStrategy),
     Generate,
     ToggleAutoPlay,
     ThrottleChanged(bool),
@@ -49,6 +52,7 @@ struct TraceViewer {
     step_index: usize,
     width_input: String,
     height_input: String,
+    strategy: SolverStrategy,
     status: String,
     is_playing: bool,
     is_throttled: bool,
@@ -56,7 +60,8 @@ struct TraceViewer {
 
 impl TraceViewer {
     fn new() -> Self {
-        let (solver, steps) = start_solver(6, 6).expect("default trace should start");
+        let strategy = SolverStrategy::Random;
+        let (solver, steps) = start_solver(6, 6, strategy).expect("default trace should start");
 
         Self {
             solver: Some(solver),
@@ -64,6 +69,7 @@ impl TraceViewer {
             step_index: 0,
             width_input: String::from("6"),
             height_input: String::from("6"),
+            strategy,
             status: String::from("6 x 6 puzzle ready"),
             is_playing: false,
             is_throttled: false,
@@ -90,13 +96,19 @@ fn update(viewer: &mut TraceViewer, message: Message) {
         }
         Message::WidthChanged(width) => viewer.width_input = width,
         Message::HeightChanged(height) => viewer.height_input = height,
+        Message::StrategyChanged(strategy) => {
+            viewer.strategy = strategy;
+            viewer.is_playing = false;
+            viewer.status = format!("strategy: {strategy}");
+        }
         Message::Generate => match requested_dimensions(viewer) {
-            Ok((width, height)) => match start_solver(width, height) {
+            Ok((width, height)) => match start_solver(width, height, viewer.strategy) {
                 Ok((solver, steps)) => {
                     viewer.solver = Some(solver);
                     viewer.steps = steps;
                     viewer.step_index = 0;
-                    viewer.status = format!("{width} x {height} puzzle ready");
+                    viewer.status =
+                        format!("{width} x {height} puzzle ready with {}", viewer.strategy);
                     viewer.is_playing = false;
                 }
                 Err(error) => {
@@ -176,6 +188,13 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         text_input("height", &viewer.height_input)
             .on_input(Message::HeightChanged)
             .width(80),
+        text("Strategy"),
+        pick_list(
+            SolverStrategy::ALL,
+            Some(viewer.strategy),
+            Message::StrategyChanged
+        )
+        .width(190),
         button("Generate").on_press(Message::Generate),
         text(&viewer.status),
     ]
@@ -217,6 +236,25 @@ fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         .width(Fill)
         .height(Fill)
         .into()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SolverStrategy {
+    Random,
+    FirstAgainstRest,
+}
+
+impl SolverStrategy {
+    const ALL: [Self; 2] = [Self::Random, Self::FirstAgainstRest];
+}
+
+impl Display for SolverStrategy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SolverStrategy::Random => formatter.write_str("Random pair"),
+            SolverStrategy::FirstAgainstRest => formatter.write_str("First against rest"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -459,8 +497,12 @@ fn solve_remaining_steps(viewer: &mut TraceViewer) {
     viewer.is_playing = false;
 }
 
-fn start_solver(width: usize, height: usize) -> Result<(PuzzleSolver, Vec<SolveStep>), String> {
-    let mut solver = build_solver(width, height)
+fn start_solver(
+    width: usize,
+    height: usize,
+    strategy: SolverStrategy,
+) -> Result<(PuzzleSolver, Vec<SolveStep>), String> {
+    let mut solver = build_solver(width, height, strategy)
         .map_err(|error| format!("could not start puzzle solver: {error:?}"))?;
     let first_step = solver
         .next()
@@ -473,6 +515,7 @@ fn start_solver(width: usize, height: usize) -> Result<(PuzzleSolver, Vec<SolveS
 fn build_solver(
     width: usize,
     height: usize,
+    strategy: SolverStrategy,
 ) -> Result<PuzzleSolver, jigsaw_simulation::PuzzleError> {
     let grid = generate_guid_grid(width, height);
     let mut pieces = pieces_from_grid(&grid);
@@ -487,7 +530,14 @@ fn build_solver(
         pieces.swap(index, swap_index);
     });
 
-    PuzzleSolver::new(pieces, 9)
+    match strategy {
+        SolverStrategy::Random => {
+            PuzzleSolver::with_picking_strategy(pieces, RandomPickingStrategy::new(9))
+        }
+        SolverStrategy::FirstAgainstRest => {
+            PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+        }
+    }
 }
 
 #[derive(Debug)]
