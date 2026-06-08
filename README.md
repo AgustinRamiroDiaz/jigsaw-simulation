@@ -125,3 +125,31 @@ Run everything you usually need:
 cargo test -p jigsaw-simulation
 cargo check -p trace-viewer
 ```
+
+## Benchmarks and Profiling
+
+Compare the random strategy with the first-against-rest strategy:
+
+```bash
+cargo bench --bench solver_strategies
+```
+
+The benchmark uses 20 measured samples by default. You can tune that without
+editing code:
+
+```bash
+BENCH_SAMPLE_COUNT=50 BENCH_WARMUP_COUNT=5 cargo bench --bench solver_strategies
+```
+
+Run an optimized profiling workload for one or both strategies:
+
+```bash
+cargo run --profile profiling --bin solver_profile -- --strategy both --width 10 --height 10 --iterations 10
+```
+
+The profiler prints elapsed time and solver counters, and can be wrapped by
+system profilers such as `perf`:
+
+```bash
+perf record --call-graph=dwarf cargo run --profile profiling --bin solver_profile -- --strategy random --width 10 --height 10 --iterations 100
+```

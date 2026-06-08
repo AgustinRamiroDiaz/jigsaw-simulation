@@ -8,6 +8,12 @@ pub trait PickingStrategy: std::fmt::Debug {
     fn pick(&mut self, polyomino_count: usize) -> Option<(usize, usize)>;
 }
 
+impl<T: PickingStrategy + ?Sized> PickingStrategy for Box<T> {
+    fn pick(&mut self, polyomino_count: usize) -> Option<(usize, usize)> {
+        (**self).pick(polyomino_count)
+    }
+}
+
 #[derive(Debug)]
 pub struct RandomPickingStrategy {
     rng: SimpleRng,
