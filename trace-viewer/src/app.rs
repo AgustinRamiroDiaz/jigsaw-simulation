@@ -6,11 +6,11 @@ use iced::widget::{
     button, canvas, checkbox, column, container, pick_list, row, slider, text, text_input,
 };
 use iced::{Element, Fill, Subscription, Task};
-use jigsaw_simulation::{Piece, PuzzleSolver, SolveStep, TraceAction};
+use jigsaw_simulation::{Piece, SolveStep, TraceAction};
 
 use crate::canvas::TraceCanvas;
 use crate::image_upload::{UploadedImage, choose_image_file};
-use crate::puzzle::{ImageTile, PuzzleImage, start_solver};
+use crate::puzzle::{ImageTile, PuzzleImage, TraceSolver, start_solver};
 use crate::strategy::SolverStrategy;
 
 const FAST_AUTOPLAY_INTERVAL: Duration = Duration::from_millis(16);
@@ -40,9 +40,8 @@ pub(crate) enum Message {
     AutoAdvance,
 }
 
-#[derive(Debug)]
 pub(crate) struct TraceViewer {
-    solver: Option<PuzzleSolver>,
+    solver: Option<Box<dyn TraceSolver>>,
     steps: Vec<SolveStep>,
     step_index: usize,
     first_stored_step_index: usize,

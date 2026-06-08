@@ -6,14 +6,15 @@ use std::{
 
 use jigsaw_simulation::{
     FirstAgainstRestPickingStrategy, PickingStrategy, Piece, PuzzleError, PuzzleSolver,
-    RandomPickingStrategy, TraceAction, assert_grid_has_matching_neighbors, generate_guid_grid,
-    pieces_from_grid,
+    RandomPickingStrategy, SideIndexedSolver, TraceAction, assert_grid_has_matching_neighbors,
+    generate_guid_grid, pieces_from_grid,
 };
 
 #[derive(Clone, Copy)]
 enum StrategyKind {
     Random,
     FirstAgainstRest,
+    SideIndexed,
 }
 
 impl StrategyKind {
@@ -21,6 +22,7 @@ impl StrategyKind {
         match value {
             "random" => Some(Self::Random),
             "first-against-rest" | "first_against_rest" | "first" => Some(Self::FirstAgainstRest),
+            "side-indexed" | "side_indexed" | "indexed" => Some(Self::SideIndexed),
             _ => None,
         }
     }
@@ -29,13 +31,17 @@ impl StrategyKind {
         match self {
             Self::Random => "random",
             Self::FirstAgainstRest => "first-against-rest",
+            Self::SideIndexed => "side-indexed",
         }
     }
 
-    fn strategy(self, seed: u64) -> Box<dyn PickingStrategy> {
+    fn run(self, pieces: Vec<Piece>, seed: u64) -> Result<RunResult, PuzzleError> {
         match self {
-            Self::Random => Box::new(RandomPickingStrategy::new(seed)),
-            Self::FirstAgainstRest => Box::new(FirstAgainstRestPickingStrategy::new()),
+            Self::Random => run_picking_solver(pieces, Box::new(RandomPickingStrategy::new(seed))),
+            Self::FirstAgainstRest => {
+                run_picking_solver(pieces, Box::new(FirstAgainstRestPickingStrategy::new()))
+            }
+            Self::SideIndexed => run_side_indexed_solver(pieces),
         }
     }
 }
@@ -79,10 +85,7 @@ fn main() -> ExitCode {
         let mut last_counts = SolverCounts::default();
 
         for iteration in 0..config.iterations {
-            let result = match run_solver(
-                pieces.clone(),
-                strategy.strategy(config.seed + iteration as u64),
-            ) {
+            let result = match strategy.run(pieces.clone(), config.seed + iteration as u64) {
                 Ok(result) => result,
                 Err(error) => {
                     eprintln!("{} failed: {error:?}", strategy.name());
@@ -118,7 +121,7 @@ impl Config {
         let mut height = 10;
         let mut seed = 42;
         let mut iterations = 1;
-        let mut strategies = vec![StrategyKind::Random, StrategyKind::FirstAgainstRest];
+        let mut strategies = all_strategies();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -130,8 +133,8 @@ impl Config {
                     let value = args
                         .next()
                         .ok_or_else(|| "--strategy requires a value".to_string())?;
-                    strategies = if value == "both" {
-                        vec![StrategyKind::Random, StrategyKind::FirstAgainstRest]
+                    strategies = if value == "all" || value == "both" {
+                        all_strategies()
                     } else {
                         vec![
                             StrategyKind::parse(&value)
@@ -171,11 +174,46 @@ fn parse_next<T: std::str::FromStr>(
         .map_err(|_| format!("{name} has an invalid value"))
 }
 
-fn run_solver(
+fn all_strategies() -> Vec<StrategyKind> {
+    vec![
+        StrategyKind::Random,
+        StrategyKind::FirstAgainstRest,
+        StrategyKind::SideIndexed,
+    ]
+}
+
+fn run_picking_solver(
     pieces: Vec<Piece>,
     strategy: Box<dyn PickingStrategy>,
 ) -> Result<RunResult, PuzzleError> {
     let mut solver = PuzzleSolver::with_picking_strategy(pieces, strategy)?;
+    let started = Instant::now();
+    let mut counts = SolverCounts::default();
+
+    for step in solver.by_ref() {
+        let step = step?;
+        counts.attempts = step.attempt;
+        match step.action {
+            TraceAction::Started => {}
+            TraceAction::Joined { .. } => counts.joined += 1,
+            TraceAction::Rejected { .. } => counts.rejected += 1,
+            TraceAction::FallbackJoined { .. } => counts.fallback_joined += 1,
+        }
+    }
+
+    let solved = solver
+        .solution()
+        .unwrap_or(Err(PuzzleError::CouldNotSolve))?;
+    assert_grid_has_matching_neighbors(&solved);
+
+    Ok(RunResult {
+        elapsed: started.elapsed(),
+        counts,
+    })
+}
+
+fn run_side_indexed_solver(pieces: Vec<Piece>) -> Result<RunResult, PuzzleError> {
+    let mut solver = SideIndexedSolver::new(pieces)?;
     let started = Instant::now();
     let mut counts = SolverCounts::default();
 
@@ -216,7 +254,7 @@ fn shuffle_and_rotate(pieces: &mut [Piece], seed: u64) {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo run --release --bin solver_profile -- [--strategy random|first-against-rest|both] [--width N] [--height N] [--seed N] [--iterations N]"
+        "usage: cargo run --profile profiling --bin solver_profile -- [--strategy random|first-against-rest|side-indexed|all] [--width N] [--height N] [--seed N] [--iterations N]"
     );
 }
 

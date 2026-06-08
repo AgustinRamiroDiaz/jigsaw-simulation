@@ -128,7 +128,7 @@ cargo check -p trace-viewer
 
 ## Benchmarks and Profiling
 
-Compare the random strategy with the first-against-rest strategy:
+Compare the random, first-against-rest, and side-indexed strategies:
 
 ```bash
 cargo bench --bench solver_strategies
@@ -141,15 +141,15 @@ editing code:
 BENCH_SAMPLE_COUNT=50 BENCH_WARMUP_COUNT=5 cargo bench --bench solver_strategies
 ```
 
-Run an optimized profiling workload for one or both strategies:
+Run an optimized profiling workload for all strategies:
 
 ```bash
-cargo run --profile profiling --bin solver_profile -- --strategy both --width 10 --height 10 --iterations 10
+cargo run --profile profiling --bin solver_profile -- --strategy all --width 10 --height 10 --iterations 10
 ```
 
 The profiler prints elapsed time and solver counters, and can be wrapped by
 system profilers such as `perf`:
 
 ```bash
-perf record --call-graph=dwarf cargo run --profile profiling --bin solver_profile -- --strategy random --width 10 --height 10 --iterations 100
+perf record --call-graph=dwarf cargo run --profile profiling --bin solver_profile -- --strategy side-indexed --width 10 --height 10 --iterations 100
 ```

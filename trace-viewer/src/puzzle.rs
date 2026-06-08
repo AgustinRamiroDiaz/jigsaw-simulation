@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use iced::widget::image::Handle;
 use jigsaw_simulation::{
-    FirstAgainstRestPickingStrategy, Piece, PuzzleSolver, RandomPickingStrategy, SolveStep,
-    generate_guid_grid, pieces_from_grid,
+    FirstAgainstRestPickingStrategy, Piece, PuzzleError, PuzzleSolver, RandomPickingStrategy,
+    SideIndexedSolver, SolveStep, generate_guid_grid, pieces_from_grid,
 };
 
 use crate::image_upload::UploadedImage;
@@ -26,12 +26,27 @@ pub(crate) struct ImageTile {
     pub(crate) clockwise_rotations: u8,
 }
 
-#[derive(Debug)]
 pub(crate) struct PuzzleSetup {
-    pub(crate) solver: PuzzleSolver,
+    pub(crate) solver: Box<dyn TraceSolver>,
     pub(crate) steps: Vec<SolveStep>,
     pub(crate) image: PuzzleImage,
     pub(crate) image_tiles: HashMap<Piece, ImageTile>,
+}
+
+pub(crate) trait TraceSolver: Iterator<Item = Result<SolveStep, PuzzleError>> {
+    fn solution(&self) -> Option<Result<Vec<Vec<Piece>>, PuzzleError>>;
+}
+
+impl TraceSolver for PuzzleSolver {
+    fn solution(&self) -> Option<Result<Vec<Vec<Piece>>, PuzzleError>> {
+        self.solution()
+    }
+}
+
+impl TraceSolver for SideIndexedSolver {
+    fn solution(&self) -> Option<Result<Vec<Vec<Piece>>, PuzzleError>> {
+        self.solution()
+    }
 }
 
 pub(crate) fn start_solver(
@@ -72,14 +87,17 @@ fn build_puzzle(
         pieces.swap(index, swap_index);
     });
 
-    let solver = match strategy {
-        SolverStrategy::Random => {
-            PuzzleSolver::with_picking_strategy(pieces, RandomPickingStrategy::new(9))
-        }
-        SolverStrategy::FirstAgainstRest => {
-            PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
-        }
-    }?;
+    let solver: Box<dyn TraceSolver> = match strategy {
+        SolverStrategy::Random => Box::new(PuzzleSolver::with_picking_strategy(
+            pieces,
+            RandomPickingStrategy::new(9),
+        )?),
+        SolverStrategy::FirstAgainstRest => Box::new(PuzzleSolver::with_picking_strategy(
+            pieces,
+            FirstAgainstRestPickingStrategy::new(),
+        )?),
+        SolverStrategy::SideIndexed => Box::new(SideIndexedSolver::new(pieces)?),
+    };
 
     Ok(PuzzleSetup {
         solver,

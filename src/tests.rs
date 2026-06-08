@@ -222,6 +222,56 @@ fn puzzle_solver_can_use_first_against_rest_strategy() {
 }
 
 #[test]
+fn side_indexed_solver_yields_started_step_first() {
+    let grid = generate_guid_grid(2, 2);
+    let pieces = pieces_from_grid(&grid);
+    let mut solver = SideIndexedSolver::new(pieces).expect("solver should initialize");
+
+    let first_step = solver
+        .next()
+        .expect("solver should yield initial step")
+        .expect("initial step should succeed");
+
+    assert_eq!(first_step.attempt, 0);
+    assert!(matches!(first_step.action, TraceAction::Started));
+    assert_eq!(first_step.polyominos.len(), 4);
+    assert!(solver.solution().is_none());
+}
+
+#[test]
+fn side_indexed_solver_solves_generated_grid() {
+    let rows = 10;
+    let cols = 10;
+    let grid = generate_guid_grid(cols, rows);
+    let mut pieces = pieces_from_grid(&grid);
+    let mut rng = SimpleRng::new(42);
+
+    pieces.iter_mut().for_each(|piece| {
+        *piece = (0..rng.next_index(4)).fold(piece.clone(), |piece, _| piece.rotate_clockwise())
+    });
+
+    (1..pieces.len()).rev().for_each(|index| {
+        let swap_index = rng.next_index(index + 1);
+        pieces.swap(index, swap_index);
+    });
+
+    let mut solver = SideIndexedSolver::new(pieces).expect("solver should initialize");
+    solver
+        .by_ref()
+        .try_for_each(|step| step.map(|_| ()))
+        .expect("iterator should solve");
+
+    let solved = solver
+        .solution()
+        .expect("solution should be available after iterator completes")
+        .expect("solution should be valid");
+
+    assert_grid_has_matching_neighbors(&solved);
+    assert_eq!(solved.len(), rows);
+    assert_eq!(solved[0].len(), cols);
+}
+
+#[test]
 fn first_against_rest_rejections_keep_the_first_polyomino_stable() {
     let pieces = vec![
         Piece::new([

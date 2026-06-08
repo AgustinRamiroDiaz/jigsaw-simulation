@@ -5,7 +5,7 @@ use std::{
 
 use jigsaw_simulation::{
     FirstAgainstRestPickingStrategy, PickingStrategy, Piece, PuzzleError, PuzzleSolver,
-    RandomPickingStrategy, generate_guid_grid, pieces_from_grid,
+    RandomPickingStrategy, SideIndexedSolver, generate_guid_grid, pieces_from_grid,
 };
 
 #[derive(Clone)]
@@ -39,15 +39,16 @@ fn main() {
     for case in cases {
         run_case::<RandomPickingStrategyFactory>(&case, sample_count, warmup_count);
         run_case::<FirstAgainstRestPickingStrategyFactory>(&case, sample_count, warmup_count);
+        run_case::<SideIndexedSolverFactory>(&case, sample_count, warmup_count);
     }
 }
 
 fn run_case<F: StrategyFactory>(case: &PuzzleCase, sample_count: usize, warmup_count: usize) {
     for _ in 0..warmup_count {
-        black_box(solve(case.pieces.clone(), F::strategy(case.seed)).expect("warmup should solve"));
+        black_box(F::solve(case.pieces.clone(), case.seed).expect("warmup should solve"));
     }
 
-    let result = benchmark(case, sample_count, F::strategy);
+    let result = benchmark::<F>(case, sample_count);
     println!(
         "{:<14} {:<20} {:>10.3} {:>10.3} {:>10.3} {:>10}",
         format!("{}x{}", case.width, case.height),
@@ -60,21 +61,14 @@ fn run_case<F: StrategyFactory>(case: &PuzzleCase, sample_count: usize, warmup_c
     black_box(case.name);
 }
 
-fn benchmark(
-    case: &PuzzleCase,
-    sample_count: usize,
-    mut strategy: impl FnMut(u64) -> Box<dyn PickingStrategy>,
-) -> BenchResult {
+fn benchmark<F: StrategyFactory>(case: &PuzzleCase, sample_count: usize) -> BenchResult {
     let mut samples = Vec::with_capacity(sample_count);
     let mut attempts = 0;
 
     for sample_index in 0..sample_count {
         let started = Instant::now();
-        attempts = solve(
-            case.pieces.clone(),
-            strategy(case.seed + sample_index as u64),
-        )
-        .expect("benchmark puzzle should solve");
+        attempts = F::solve(case.pieces.clone(), case.seed + sample_index as u64)
+            .expect("benchmark puzzle should solve");
         samples.push(started.elapsed());
     }
 
@@ -137,7 +131,7 @@ fn millis(duration: Duration) -> f64 {
 
 trait StrategyFactory {
     const NAME: &'static str;
-    fn strategy(seed: u64) -> Box<dyn PickingStrategy>;
+    fn solve(pieces: Vec<Piece>, seed: u64) -> Result<usize, PuzzleError>;
 }
 
 struct RandomPickingStrategyFactory;
@@ -145,8 +139,8 @@ struct RandomPickingStrategyFactory;
 impl StrategyFactory for RandomPickingStrategyFactory {
     const NAME: &'static str = "random";
 
-    fn strategy(seed: u64) -> Box<dyn PickingStrategy> {
-        Box::new(RandomPickingStrategy::new(seed))
+    fn solve(pieces: Vec<Piece>, seed: u64) -> Result<usize, PuzzleError> {
+        solve(pieces, Box::new(RandomPickingStrategy::new(seed)))
     }
 }
 
@@ -155,8 +149,30 @@ struct FirstAgainstRestPickingStrategyFactory;
 impl StrategyFactory for FirstAgainstRestPickingStrategyFactory {
     const NAME: &'static str = "first_against_rest";
 
-    fn strategy(_seed: u64) -> Box<dyn PickingStrategy> {
-        Box::new(FirstAgainstRestPickingStrategy::new())
+    fn solve(pieces: Vec<Piece>, _seed: u64) -> Result<usize, PuzzleError> {
+        solve(pieces, Box::new(FirstAgainstRestPickingStrategy::new()))
+    }
+}
+
+struct SideIndexedSolverFactory;
+
+impl StrategyFactory for SideIndexedSolverFactory {
+    const NAME: &'static str = "side_indexed";
+
+    fn solve(pieces: Vec<Piece>, _seed: u64) -> Result<usize, PuzzleError> {
+        let mut solver = SideIndexedSolver::new(pieces)?;
+        let mut attempts = 0;
+
+        for step in solver.by_ref() {
+            attempts = step?.attempt;
+        }
+
+        black_box(
+            solver
+                .solution()
+                .unwrap_or(Err(PuzzleError::CouldNotSolve))?,
+        );
+        Ok(attempts)
     }
 }
 

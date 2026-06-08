@@ -20,7 +20,9 @@ Results:
 
 | Case | Strategy | Avg ms | Min ms | Max ms | Attempts |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 4x4 | random | 0.215 | 0.160 | 0.278 | 57 |
-| 4x4 | first_against_rest | 0.113 | 0.106 | 0.150 | 17 |
-| 10x10 | random | 27.645 | 23.186 | 31.077 | 1416 |
-| 10x10 | first_against_rest | 6.482 | 6.096 | 7.994 | 241 |
+| 4x4 | random | 0.257 | 0.171 | 0.668 | 57 |
+| 4x4 | first_against_rest | 0.119 | 0.112 | 0.154 | 17 |
+| 4x4 | side_indexed | 0.244 | 0.185 | 0.527 | 15 |
+| 10x10 | random | 28.072 | 23.068 | 32.061 | 1416 |
+| 10x10 | first_against_rest | 6.814 | 6.260 | 10.146 | 241 |
+| 10x10 | side_indexed | 4.746 | 4.544 | 5.155 | 99 |

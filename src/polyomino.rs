@@ -32,6 +32,10 @@ impl Polyomino {
         self.cells.get(&point)
     }
 
+    pub(crate) fn cells(&self) -> impl Iterator<Item = (&Point, &Piece)> {
+        self.cells.iter()
+    }
+
     pub fn trace_snapshot(&self) -> TracePolyomino {
         let mut cells: Vec<_> = self
             .normalized_clone()
@@ -102,7 +106,7 @@ impl Polyomino {
             .collect()
     }
 
-    fn rotations(&self) -> Vec<Polyomino> {
+    pub(crate) fn rotations(&self) -> Vec<Polyomino> {
         (0..4)
             .scan(self.clone(), |current, _| {
                 let rotation = current.clone();
@@ -126,7 +130,7 @@ impl Polyomino {
         Self::from_cells(cells)
     }
 
-    fn join_translated(&self, other: &Polyomino, offset: Point) -> Option<Polyomino> {
+    pub(crate) fn join_translated(&self, other: &Polyomino, offset: Point) -> Option<Polyomino> {
         let cells =
             other
                 .cells
