@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use iced::widget::image::Handle;
 use jigsaw_simulation::{
     FirstAgainstRestPickingStrategy, Piece, PuzzleError, PuzzleSolver, RandomPickingStrategy,
     SideIndexedSolver, SolveStep, generate_guid_grid, pieces_from_grid,
@@ -14,7 +13,9 @@ const PUZZLE_IMAGE_SIZE: u32 = 1_024;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PuzzleImage {
-    pub(crate) handle: Handle,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) pixels: Vec<u8>,
     pub(crate) cols: usize,
     pub(crate) rows: usize,
 }
@@ -103,9 +104,11 @@ fn build_puzzle(
         solver,
         steps: Vec::new(),
         image: PuzzleImage {
-            handle: uploaded_image
+            pixels: uploaded_image
                 .map(|image| uploaded_puzzle_image(image, width, height))
-                .unwrap_or_else(generated_puzzle_image),
+                .unwrap_or_else(|| generated_puzzle_image(width, height)),
+            width: fitted_image_size(width, height).0,
+            height: fitted_image_size(width, height).1,
             cols: width,
             rows: height,
         },
@@ -135,17 +138,16 @@ fn image_tile_lookup(grid: &[Vec<Piece>]) -> HashMap<Piece, ImageTile> {
         .collect()
 }
 
-fn generated_puzzle_image() -> Handle {
-    let width = PUZZLE_IMAGE_SIZE;
-    let height = PUZZLE_IMAGE_SIZE;
+fn generated_puzzle_image(cols: usize, rows: usize) -> Vec<u8> {
+    let (width, height) = fitted_image_size(cols, rows);
     let pixels = (0..height)
         .flat_map(|y| (0..width).flat_map(move |x| landscape_pixel(x, y, width, height)))
         .collect::<Vec<_>>();
 
-    Handle::from_rgba(width, height, pixels)
+    pixels
 }
 
-fn uploaded_puzzle_image(uploaded: &UploadedImage, cols: usize, rows: usize) -> Handle {
+fn uploaded_puzzle_image(uploaded: &UploadedImage, cols: usize, rows: usize) -> Vec<u8> {
     let source =
         image::RgbaImage::from_raw(uploaded.width, uploaded.height, uploaded.pixels.clone())
             .expect("uploaded image dimensions should match decoded RGBA pixels");
@@ -161,7 +163,7 @@ fn uploaded_puzzle_image(uploaded: &UploadedImage, cols: usize, rows: usize) -> 
         image::imageops::FilterType::Triangle,
     );
 
-    Handle::from_rgba(target_width, target_height, resized.into_raw())
+    resized.into_raw()
 }
 
 fn center_crop_rect(

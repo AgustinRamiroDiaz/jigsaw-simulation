@@ -4,20 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = [
-    "canvas",
-    "crisp",
-    "fira-sans",
-    "image-without-codecs",
-    "tokio",
-    "web-colors",
-    "webgl",
-    "wgpu-bare",
-    "wayland",
-    "x11",
-] }
+eframe = "0.34"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 jigsaw-simulation = { path = ".." }
+web-time = "1.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
@@ -35,6 +25,7 @@ web-sys = { version = "0.3", features = [
     "EventTarget",
     "File",
     "FileList",
+    "HtmlCanvasElement",
     "HtmlElement",
     "HtmlInputElement",
     "Node",

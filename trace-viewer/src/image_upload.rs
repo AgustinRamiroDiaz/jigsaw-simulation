@@ -89,7 +89,7 @@ pub(crate) async fn choose_image_file() -> Result<UploadedImage, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) async fn choose_image_file() -> Result<UploadedImage, String> {
+pub(crate) fn choose_image_file() -> Result<UploadedImage, String> {
     Err(String::from(
         "image upload is available in the web viewer for now",
     ))
