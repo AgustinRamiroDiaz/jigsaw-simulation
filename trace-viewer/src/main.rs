@@ -69,10 +69,15 @@ async fn start_web() -> Result<(), wasm_bindgen::JsValue> {
     };
 
     let runner = Box::leak(Box::new(eframe::WebRunner::new()));
+    let web_options = eframe::WebOptions {
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
+
     runner
         .start(
             canvas,
-            eframe::WebOptions::default(),
+            web_options,
             Box::new(|creation_context| Ok(Box::new(TraceViewer::new(creation_context)))),
         )
         .await

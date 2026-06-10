@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.34"
+eframe = { version = "0.34", features = ["glow"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 jigsaw-simulation = { path = ".." }
 web-time = "1.1"
