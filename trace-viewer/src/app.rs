@@ -5,7 +5,7 @@ use iced::time;
 use iced::widget::{
     button, canvas, checkbox, column, container, pick_list, row, slider, text, text_input,
 };
-use iced::{Element, Fill, Subscription, Task};
+use iced::{Element, Fill, Subscription, Task, event, keyboard};
 use jigsaw_simulation::{Piece, SolveStep, TraceAction};
 
 use crate::canvas::TraceCanvas;
@@ -35,6 +35,8 @@ pub(crate) enum Message {
     ChooseImage,
     ImageSelected(Result<UploadedImage, String>),
     Generate,
+    FocusNext,
+    FocusPrevious,
     ToggleAutoPlay,
     ThrottleChanged(bool),
     AutoAdvance,
@@ -157,6 +159,8 @@ pub(crate) fn update(viewer: &mut TraceViewer, message: Message) -> Task<Message
                 viewer.is_playing = false;
             }
         },
+        Message::FocusNext => return iced::widget::operation::focus_next(),
+        Message::FocusPrevious => return iced::widget::operation::focus_previous(),
         Message::ToggleAutoPlay => {
             viewer.is_playing = !viewer.is_playing;
             viewer.status = if viewer.is_playing {
@@ -184,8 +188,10 @@ pub(crate) fn update(viewer: &mut TraceViewer, message: Message) -> Task<Message
 }
 
 pub(crate) fn subscription(viewer: &TraceViewer) -> Subscription<Message> {
+    let keyboard = event::listen_with(tab_navigation);
+
     if !viewer.is_playing {
-        return Subscription::none();
+        return keyboard;
     }
 
     let interval = if viewer.is_throttled {
@@ -194,7 +200,10 @@ pub(crate) fn subscription(viewer: &TraceViewer) -> Subscription<Message> {
         FAST_AUTOPLAY_INTERVAL
     };
 
-    time::every(interval).map(|_| Message::AutoAdvance)
+    Subscription::batch([
+        keyboard,
+        time::every(interval).map(|_| Message::AutoAdvance),
+    ])
 }
 
 pub(crate) fn view(viewer: &TraceViewer) -> Element<'_, Message> {
@@ -215,11 +224,15 @@ pub(crate) fn view(viewer: &TraceViewer) -> Element<'_, Message> {
     let generator = row![
         text("Width"),
         text_input("width", &viewer.width_input)
+            .id("width-input")
             .on_input(Message::WidthChanged)
+            .on_submit(Message::Generate)
             .width(80),
         text("Height"),
         text_input("height", &viewer.height_input)
+            .id("height-input")
             .on_input(Message::HeightChanged)
+            .on_submit(Message::Generate)
             .width(80),
         text("Strategy"),
         pick_list(
@@ -272,6 +285,25 @@ pub(crate) fn view(viewer: &TraceViewer) -> Element<'_, Message> {
         .width(Fill)
         .height(Fill)
         .into()
+}
+
+fn tab_navigation(
+    event: iced::Event,
+    _status: event::Status,
+    _window: iced::window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Tab),
+            modifiers,
+            ..
+        }) if modifiers.shift() => Some(Message::FocusPrevious),
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Tab),
+            ..
+        }) => Some(Message::FocusNext),
+        _ => None,
+    }
 }
 
 fn action_label(action: &TraceAction) -> String {
