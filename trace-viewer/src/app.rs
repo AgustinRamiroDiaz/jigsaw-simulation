@@ -8,6 +8,7 @@ use web_time::{Duration, Instant};
 
 use crate::canvas::draw_trace_canvas;
 use crate::image_upload::UploadedImage;
+use crate::image_upload::capture_image_file;
 use crate::image_upload::choose_image_file;
 use crate::puzzle::{ImageTile, PuzzleImage, TraceSolver, start_solver};
 use crate::strategy::SolverStrategy;
@@ -140,6 +141,23 @@ impl TraceViewer {
         self.receive_selected_image(choose_image_file());
     }
 
+    fn capture_image(&mut self) {
+        self.is_playing = false;
+        self.status = String::from("opening camera...");
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (sender, receiver) = oneshot::channel();
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = sender.send(capture_image_file().await);
+            });
+            self.image_upload = Some(receiver);
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.receive_selected_image(capture_image_file());
+    }
+
     fn receive_selected_image(&mut self, result: Result<UploadedImage, String>) {
         match result {
             Ok(image) => {
@@ -205,121 +223,160 @@ impl eframe::App for TraceViewer {
         self.poll_image_upload(&ctx);
         self.ensure_texture(&ctx);
 
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.heading("Jigsaw trace");
-            ui.separator();
-            ui.label(format!(
-                "step {} of {} executed",
-                self.absolute_step_index(),
-                self.last_absolute_step_index()
-            ));
-            ui.separator();
-            ui.label(action_label(&self.current_step().action));
-        });
-        ui.add_space(6.0);
+        egui::Panel::left("trace_config")
+            .resizable(false)
+            .exact_size(260.0)
+            .show_inside(ui, |ui| {
+                ui.add_space(10.0);
+                ui.heading("Jigsaw trace");
+                ui.add_space(10.0);
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Width");
-            let width = ui.add_sized(
-                [72.0, 24.0],
-                egui::TextEdit::singleline(&mut self.width_input),
-            );
+                ui.label("Puzzle size");
+                ui.horizontal(|ui| {
+                    ui.label("Width");
+                    let width = ui.add_sized(
+                        [72.0, 24.0],
+                        egui::TextEdit::singleline(&mut self.width_input),
+                    );
 
-            ui.label("Height");
-            let height = ui.add_sized(
-                [72.0, 24.0],
-                egui::TextEdit::singleline(&mut self.height_input),
-            );
+                    ui.label("Height");
+                    let height = ui.add_sized(
+                        [72.0, 24.0],
+                        egui::TextEdit::singleline(&mut self.height_input),
+                    );
 
-            if (width.lost_focus() || height.lost_focus())
-                && ui.input(|input| input.key_pressed(egui::Key::Enter))
-            {
-                self.generate();
-            }
-
-            ui.label("Strategy");
-            let previous_strategy = self.strategy;
-            ComboBox::from_id_salt("strategy")
-                .selected_text(self.strategy.to_string())
-                .width(190.0)
-                .show_ui(ui, |ui| {
-                    SolverStrategy::ALL.into_iter().for_each(|strategy| {
-                        ui.selectable_value(&mut self.strategy, strategy, strategy.to_string());
-                    });
+                    if (width.lost_focus() || height.lost_focus())
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    {
+                        self.generate();
+                    }
                 });
 
-            if self.strategy != previous_strategy {
-                self.is_playing = false;
-                self.status = format!("strategy: {}", self.strategy);
-            }
+                ui.add_space(10.0);
+                ui.label("Strategy");
+                let previous_strategy = self.strategy;
+                ComboBox::from_id_salt("strategy")
+                    .selected_text(self.strategy.to_string())
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        SolverStrategy::ALL.into_iter().for_each(|strategy| {
+                            ui.selectable_value(&mut self.strategy, strategy, strategy.to_string());
+                        });
+                    });
 
-            if ui.button("Choose image").clicked() {
-                self.choose_image();
-            }
+                if self.strategy != previous_strategy {
+                    self.is_playing = false;
+                    self.status = format!("strategy: {}", self.strategy);
+                }
 
-            if ui.button("Generate").clicked() {
-                self.generate();
-            }
+                ui.add_space(10.0);
+                if ui
+                    .add_sized([ui.available_width(), 28.0], egui::Button::new("Generate"))
+                    .clicked()
+                {
+                    self.generate();
+                }
 
-            ui.label(&self.status);
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+                ui.label("Image");
+                if ui
+                    .add_sized([ui.available_width(), 28.0], egui::Button::new("Upload photo"))
+                    .clicked()
+                {
+                    self.choose_image();
+                }
+                if ui
+                    .add_sized([ui.available_width(), 28.0], egui::Button::new("Take picture"))
+                    .clicked()
+                {
+                    self.capture_image();
+                }
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+                ui.label("Playback");
+                ui.horizontal(|ui| {
+                    if ui.button("First").clicked() {
+                        self.step_index = 0;
+                    }
+
+                    if ui.button("Prev").clicked() {
+                        self.step_index = self.step_index.saturating_sub(1);
+                    }
+
+                    if ui.button("Step").clicked() {
+                        advance_to_next_step(self);
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    let autoplay_label = if self.is_playing { "Stop" } else { "Auto" };
+                    if ui.button(autoplay_label).clicked() {
+                        self.is_playing = !self.is_playing;
+                        self.last_autoplay_tick = Instant::now();
+                        self.status = if self.is_playing {
+                            String::from("auto play running")
+                        } else {
+                            String::from("auto play stopped")
+                        };
+                    }
+
+                    if ui.button("Last").clicked() {
+                        self.step_index = self.last_index();
+                    }
+
+                    if ui.checkbox(&mut self.is_throttled, "Throttle").changed() {
+                        self.status = if self.is_throttled {
+                            String::from("auto play throttled")
+                        } else {
+                            String::from("auto play unthrottled")
+                        };
+                    }
+                });
+
+                let last_index = self.last_index();
+                ui.add(
+                    egui::Slider::new(&mut self.step_index, 0..=last_index)
+                        .show_value(false)
+                        .clamping(egui::SliderClamping::Always),
+                );
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+                ui.label("Status");
+                ui.label(&self.status);
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!(
+                    "Step {} of {} executed",
+                    self.absolute_step_index(),
+                    self.last_absolute_step_index()
+                ));
+                ui.separator();
+                ui.label(action_label(&self.current_step().action));
+            });
+            ui.add_space(8.0);
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    draw_trace_canvas(
+                        ui,
+                        self.current_step(),
+                        &self.image,
+                        &self.image_tiles,
+                        self.image_texture.as_ref(),
+                    );
+                });
         });
-
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("First").clicked() {
-                self.step_index = 0;
-            }
-
-            if ui.button("Previous").clicked() {
-                self.step_index = self.step_index.saturating_sub(1);
-            }
-
-            if ui.button("Execute step").clicked() {
-                advance_to_next_step(self);
-            }
-
-            let autoplay_label = if self.is_playing { "Stop" } else { "Auto play" };
-            if ui.button(autoplay_label).clicked() {
-                self.is_playing = !self.is_playing;
-                self.last_autoplay_tick = Instant::now();
-                self.status = if self.is_playing {
-                    String::from("auto play running")
-                } else {
-                    String::from("auto play stopped")
-                };
-            }
-
-            if ui.checkbox(&mut self.is_throttled, "Throttle").changed() {
-                self.status = if self.is_throttled {
-                    String::from("auto play throttled")
-                } else {
-                    String::from("auto play unthrottled")
-                };
-            }
-
-            if ui.button("Last").clicked() {
-                self.step_index = self.last_index();
-            }
-
-            let last_index = self.last_index();
-            ui.add(
-                egui::Slider::new(&mut self.step_index, 0..=last_index)
-                    .show_value(false)
-                    .clamping(egui::SliderClamping::Always),
-            );
-        });
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(8.0);
-
-        draw_trace_canvas(
-            ui,
-            self.current_step(),
-            &self.image,
-            &self.image_tiles,
-            self.image_texture.as_ref(),
-        );
     }
 }
 

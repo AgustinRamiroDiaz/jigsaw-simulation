@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::fmt::Debug;
 
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, Vec2};
-use jigsaw_simulation::{Direction, Piece, SolveStep, TracePolyomino};
+use jigsaw_simulation::{Piece, SolveStep, TracePolyomino};
 
 use crate::puzzle::{ImageTile, PuzzleImage};
 
@@ -13,12 +12,13 @@ pub(crate) fn draw_trace_canvas(
     image_tiles: &HashMap<Piece, ImageTile>,
     texture: Option<&TextureHandle>,
 ) {
-    let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+    let width = ui.available_width().max(1.0);
+    let layout = layout_polyominos(&step.polyominos, width);
+    let height = layout_height(&layout).max(360.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 0.0, Color32::from_rgb(245, 247, 250));
-
-    let layout = layout_polyominos(&step.polyominos, rect.width());
 
     layout.iter().for_each(|entry| {
         draw_polyomino(
@@ -72,6 +72,16 @@ fn layout_polyominos(polyominos: &[TracePolyomino], width: f32) -> Vec<Polyomino
         .collect()
 }
 
+fn layout_height(layout: &[PolyominoLayout<'_>]) -> f32 {
+    let margin = 24.0;
+
+    layout
+        .iter()
+        .map(|entry| entry.origin.y + polyomino_size(entry.polyomino, entry.cell_size).1)
+        .fold(margin, f32::max)
+        + margin
+}
+
 fn draw_polyomino(
     painter: &egui::Painter,
     polyomino: &TracePolyomino,
@@ -93,7 +103,6 @@ fn draw_polyomino(
             painter.rect_filled(rect, 0.0, Color32::from_rgb(202, 206, 211));
         }
 
-        draw_side_colors(painter, &cell.piece, rect);
         painter.rect_stroke(
             rect,
             0.0,
@@ -157,41 +166,6 @@ fn draw_image_tile(
     painter.add(egui::Shape::mesh(mesh));
 }
 
-fn draw_side_colors(painter: &egui::Painter, piece: &Piece, rect: Rect) {
-    let size = rect.width();
-    let thickness = (size * 0.14).clamp(1.5, 5.0);
-
-    [
-        (
-            Direction::Top,
-            Rect::from_min_size(rect.min, Vec2::new(size, thickness)),
-        ),
-        (
-            Direction::Right,
-            Rect::from_min_size(
-                Pos2::new(rect.right() - thickness, rect.top()),
-                Vec2::new(thickness, size),
-            ),
-        ),
-        (
-            Direction::Bottom,
-            Rect::from_min_size(
-                Pos2::new(rect.left(), rect.bottom() - thickness),
-                Vec2::new(size, thickness),
-            ),
-        ),
-        (
-            Direction::Left,
-            Rect::from_min_size(rect.min, Vec2::new(thickness, size)),
-        ),
-    ]
-    .into_iter()
-    .for_each(|(direction, rect)| {
-        let color = color_for_side(piece.side(direction));
-        painter.rect_filled(rect, 0.0, color.linear_multiply(0.58));
-    });
-}
-
 fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
     let max_x = polyomino
         .cells
@@ -209,34 +183,5 @@ fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
     (
         (max_x + 1) as f32 * cell_size,
         (max_y + 1) as f32 * cell_size,
-    )
-}
-
-fn color_for_side(side: &impl Debug) -> Color32 {
-    let hash = format!("{side:?}").bytes().fold(0_u32, |hash, byte| {
-        hash.wrapping_mul(31).wrapping_add(byte as u32)
-    });
-
-    hsl_to_rgb((hash % 360) as f32, 0.68, 0.56)
-}
-
-fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Color32 {
-    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-    let hue_prime = hue / 60.0;
-    let x = chroma * (1.0 - (hue_prime % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match hue_prime as u8 {
-        0 => (chroma, x, 0.0),
-        1 => (x, chroma, 0.0),
-        2 => (0.0, chroma, x),
-        3 => (0.0, x, chroma),
-        4 => (x, 0.0, chroma),
-        _ => (chroma, 0.0, x),
-    };
-    let m = lightness - chroma / 2.0;
-
-    Color32::from_rgb(
-        ((r1 + m) * 255.0).round() as u8,
-        ((g1 + m) * 255.0).round() as u8,
-        ((b1 + m) * 255.0).round() as u8,
     )
 }
