@@ -282,13 +282,19 @@ impl eframe::App for TraceViewer {
                 ui.add_space(10.0);
                 ui.label("Image");
                 if ui
-                    .add_sized([ui.available_width(), 28.0], egui::Button::new("Upload photo"))
+                    .add_sized(
+                        [ui.available_width(), 28.0],
+                        egui::Button::new("Upload photo"),
+                    )
                     .clicked()
                 {
                     self.choose_image();
                 }
                 if ui
-                    .add_sized([ui.available_width(), 28.0], egui::Button::new("Take picture"))
+                    .add_sized(
+                        [ui.available_width(), 28.0],
+                        egui::Button::new("Take picture"),
+                    )
                     .clicked()
                 {
                     self.capture_image();

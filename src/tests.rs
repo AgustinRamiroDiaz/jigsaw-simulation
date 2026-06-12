@@ -134,10 +134,10 @@ fn solves_generated_grid_back_into_a_complete_piece_grid() {
 }
 
 #[test]
-fn puzzle_solver_yields_started_step_first() {
+fn pair_picking_solver_yields_started_step_first() {
     let grid = generate_guid_grid(2, 2);
     let pieces = pieces_from_grid(&grid);
-    let mut solver = PuzzleSolver::new(pieces, 7).expect("solver should initialize");
+    let mut solver = PairPickingSolver::new(pieces, 7).expect("solver should initialize");
 
     let first_step = solver
         .next()
@@ -151,10 +151,10 @@ fn puzzle_solver_yields_started_step_first() {
 }
 
 #[test]
-fn puzzle_solver_collected_steps_match_trace_solver() {
+fn pair_picking_solver_collected_steps_match_trace_pair_picking_solver() {
     let grid = generate_guid_grid(3, 2);
     let pieces = pieces_from_grid(&grid);
-    let mut solver = PuzzleSolver::new(pieces.clone(), 7).expect("solver should initialize");
+    let mut solver = PairPickingSolver::new(pieces.clone(), 7).expect("solver should initialize");
 
     let collected_steps = solver
         .by_ref()
@@ -166,10 +166,10 @@ fn puzzle_solver_collected_steps_match_trace_solver() {
 }
 
 #[test]
-fn puzzle_solver_solution_is_available_after_completion() {
+fn pair_picking_solver_solution_is_available_after_completion() {
     let grid = generate_guid_grid(4, 3);
     let pieces = pieces_from_grid(&grid);
-    let mut solver = PuzzleSolver::new(pieces, 11).expect("solver should initialize");
+    let mut solver = PairPickingSolver::new(pieces, 11).expect("solver should initialize");
 
     solver
         .by_ref()
@@ -199,11 +199,11 @@ fn first_against_rest_strategy_tracks_next_candidate() {
 }
 
 #[test]
-fn puzzle_solver_can_use_first_against_rest_strategy() {
+fn pair_picking_solver_can_use_first_against_rest_strategy() {
     let grid = generate_guid_grid(4, 3);
     let pieces = pieces_from_grid(&grid);
     let mut solver =
-        PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+        PairPickingSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
             .expect("solver should initialize");
 
     solver
@@ -294,7 +294,7 @@ fn first_against_rest_rejections_keep_the_first_polyomino_stable() {
         ]),
     ];
     let mut solver =
-        PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+        PairPickingSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
             .expect("solver should initialize");
 
     let initial = solver
@@ -333,7 +333,7 @@ fn first_against_rest_keeps_all_non_first_polyominos_as_single_pieces_on_large_g
     let grid = generate_guid_grid(10, 10);
     let pieces = pieces_from_grid(&grid);
     let mut solver =
-        PuzzleSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
+        PairPickingSolver::with_picking_strategy(pieces, FirstAgainstRestPickingStrategy::new())
             .expect("solver should initialize");
 
     solver

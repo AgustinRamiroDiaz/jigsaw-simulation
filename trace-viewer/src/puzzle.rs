@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use jigsaw_simulation::{
-    FirstAgainstRestPickingStrategy, Piece, PuzzleError, PuzzleSolver, RandomPickingStrategy,
+    FirstAgainstRestPickingStrategy, PairPickingSolver, Piece, PuzzleError, RandomPickingStrategy,
     SideIndexedSolver, SolveStep, generate_guid_grid, pieces_from_grid,
 };
 
@@ -38,7 +38,7 @@ pub(crate) trait TraceSolver: Iterator<Item = Result<SolveStep, PuzzleError>> {
     fn solution(&self) -> Option<Result<Vec<Vec<Piece>>, PuzzleError>>;
 }
 
-impl TraceSolver for PuzzleSolver {
+impl TraceSolver for PairPickingSolver {
     fn solution(&self) -> Option<Result<Vec<Vec<Piece>>, PuzzleError>> {
         self.solution()
     }
@@ -89,11 +89,11 @@ fn build_puzzle(
     });
 
     let solver: Box<dyn TraceSolver> = match strategy {
-        SolverStrategy::Random => Box::new(PuzzleSolver::with_picking_strategy(
+        SolverStrategy::Random => Box::new(PairPickingSolver::with_picking_strategy(
             pieces,
             RandomPickingStrategy::new(9),
         )?),
-        SolverStrategy::FirstAgainstRest => Box::new(PuzzleSolver::with_picking_strategy(
+        SolverStrategy::FirstAgainstRest => Box::new(PairPickingSolver::with_picking_strategy(
             pieces,
             FirstAgainstRestPickingStrategy::new(),
         )?),

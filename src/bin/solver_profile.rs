@@ -5,7 +5,7 @@ use std::{
 };
 
 use jigsaw_simulation::{
-    FirstAgainstRestPickingStrategy, PickingStrategy, Piece, PuzzleError, PuzzleSolver,
+    FirstAgainstRestPickingStrategy, PairPickingSolver, PickingStrategy, Piece, PuzzleError,
     RandomPickingStrategy, SideIndexedSolver, TraceAction, assert_grid_has_matching_neighbors,
     generate_guid_grid, pieces_from_grid,
 };
@@ -186,7 +186,7 @@ fn run_picking_solver(
     pieces: Vec<Piece>,
     strategy: Box<dyn PickingStrategy>,
 ) -> Result<RunResult, PuzzleError> {
-    let mut solver = PuzzleSolver::with_picking_strategy(pieces, strategy)?;
+    let mut solver = PairPickingSolver::with_picking_strategy(pieces, strategy)?;
     let started = Instant::now();
     let mut counts = SolverCounts::default();
 
