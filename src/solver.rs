@@ -135,7 +135,11 @@ impl PuzzleSolver {
         }
 
         let polyominos: Vec<Polyomino> = pieces.into_iter().map(Polyomino::from_piece).collect();
-        let max_failed_attempts = polyominos.len().saturating_mul(polyominos.len()).max(16) * 128;
+        let max_failed_attempts = polyominos
+            .len()
+            .saturating_mul(polyominos.len())
+            .max(16)
+            .saturating_mul(128);
 
         Ok(Self {
             picking_strategy: Box::new(picking_strategy),

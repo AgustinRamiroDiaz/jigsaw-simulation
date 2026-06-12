@@ -22,7 +22,7 @@ fn decode_uploaded_image(name: String, bytes: Vec<u8>) -> Result<UploadedImage, 
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) async fn choose_image_file() -> Result<UploadedImage, String> {
+async fn choose_image_source(capture: bool) -> Result<UploadedImage, String> {
     use futures_channel::oneshot;
     use js_sys::Uint8Array;
     use wasm_bindgen::JsCast;
@@ -42,6 +42,11 @@ pub(crate) async fn choose_image_file() -> Result<UploadedImage, String> {
 
     input.set_type("file");
     input.set_accept("image/png,image/jpeg,image/*");
+    if capture {
+        input
+            .set_attribute("capture", "environment")
+            .map_err(|_| String::from("could not prepare camera capture"))?;
+    }
 
     let input_element = input
         .clone()
@@ -88,9 +93,26 @@ pub(crate) async fn choose_image_file() -> Result<UploadedImage, String> {
     decode_uploaded_image(name, bytes)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 pub(crate) async fn choose_image_file() -> Result<UploadedImage, String> {
+    choose_image_source(false).await
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn capture_image_file() -> Result<UploadedImage, String> {
+    choose_image_source(true).await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn choose_image_file() -> Result<UploadedImage, String> {
     Err(String::from(
         "image upload is available in the web viewer for now",
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn capture_image_file() -> Result<UploadedImage, String> {
+    Err(String::from(
+        "camera capture is available in the web viewer for now",
     ))
 }

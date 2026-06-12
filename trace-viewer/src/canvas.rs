@@ -1,57 +1,60 @@
 use std::collections::HashMap;
-use std::fmt::Debug;
 
-use iced::mouse;
-use iced::widget::canvas;
-use iced::{Color, Point as CanvasPoint, Rectangle, Renderer, Size, Theme, Vector};
-use jigsaw_simulation::{Direction, Piece, SolveStep, TracePolyomino};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, Vec2};
+use jigsaw_simulation::{Piece, SolveStep, TracePolyomino};
 
 use crate::puzzle::{ImageTile, PuzzleImage};
 
-#[derive(Clone, Debug)]
-pub(crate) struct TraceCanvas {
-    pub(crate) step: SolveStep,
-    pub(crate) image: PuzzleImage,
-    pub(crate) image_tiles: HashMap<Piece, ImageTile>,
-}
+pub(crate) fn draw_trace_canvas(
+    ui: &mut Ui,
+    viewport: Rect,
+    step: &SolveStep,
+    image: &PuzzleImage,
+    image_tiles: &HashMap<Piece, ImageTile>,
+    texture: Option<&TextureHandle>,
+) {
+    let width = ui.available_width().max(1.0);
+    let layout = layout_polyominos(&step.polyominos, width);
+    let height = layout_height(&layout).max(360.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let painter = ui.painter_at(rect);
 
-impl<Message> canvas::Program<Message> for TraceCanvas {
-    type State = ();
+    let visible_rect = Rect::from_min_max(
+        rect.min + viewport.min.to_vec2(),
+        rect.min + viewport.max.to_vec2(),
+    )
+    .intersect(rect);
+    painter.rect_filled(visible_rect, 0.0, Color32::from_rgb(245, 247, 250));
 
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let background = canvas::Path::rectangle(CanvasPoint::ORIGIN, bounds.size());
-        frame.fill(&background, Color::from_rgb8(245, 247, 250));
+    layout.iter().for_each(|entry| {
+        if !entry.bounds().intersects(viewport) {
+            return;
+        }
 
-        let layout = layout_polyominos(&self.step.polyominos, bounds.width);
-
-        layout.iter().for_each(|entry| {
-            draw_polyomino(
-                &mut frame,
-                entry.polyomino,
-                entry.origin,
-                entry.cell_size,
-                &self.image,
-                &self.image_tiles,
-            );
-        });
-
-        vec![frame.into_geometry()]
-    }
+        draw_polyomino(
+            &painter,
+            entry.polyomino,
+            rect.min + entry.origin.to_vec2(),
+            entry.cell_size,
+            image,
+            image_tiles,
+            texture,
+        );
+    });
 }
 
 #[derive(Clone, Debug)]
 struct PolyominoLayout<'a> {
     polyomino: &'a TracePolyomino,
-    origin: CanvasPoint,
+    origin: Pos2,
     cell_size: f32,
+}
+
+impl PolyominoLayout<'_> {
+    fn bounds(&self) -> Rect {
+        let (width, height) = polyomino_size(self.polyomino, self.cell_size);
+        Rect::from_min_size(self.origin, Vec2::new(width, height))
+    }
 }
 
 fn layout_polyominos(polyominos: &[TracePolyomino], width: f32) -> Vec<PolyominoLayout<'_>> {
@@ -72,7 +75,7 @@ fn layout_polyominos(polyominos: &[TracePolyomino], width: f32) -> Vec<Polyomino
                     *row_height = 0.0;
                 }
 
-                let origin = CanvasPoint::new(*x, *y);
+                let origin = Pos2::new(*x, *y);
                 *x += poly_width + gap;
                 *row_height = row_height.max(poly_height);
 
@@ -86,89 +89,98 @@ fn layout_polyominos(polyominos: &[TracePolyomino], width: f32) -> Vec<Polyomino
         .collect()
 }
 
+fn layout_height(layout: &[PolyominoLayout<'_>]) -> f32 {
+    let margin = 24.0;
+
+    layout
+        .iter()
+        .map(|entry| entry.origin.y + polyomino_size(entry.polyomino, entry.cell_size).1)
+        .fold(margin, f32::max)
+        + margin
+}
+
 fn draw_polyomino(
-    frame: &mut canvas::Frame,
+    painter: &egui::Painter,
     polyomino: &TracePolyomino,
-    origin: CanvasPoint,
+    origin: Pos2,
     cell_size: f32,
     image: &PuzzleImage,
     image_tiles: &HashMap<Piece, ImageTile>,
+    texture: Option<&TextureHandle>,
 ) {
     polyomino.cells.iter().for_each(|cell| {
         let x = origin.x + cell.point.x as f32 * cell_size;
         let y = origin.y + cell.point.y as f32 * cell_size;
         let size = cell_size - 2.0;
-        let rect = canvas::Path::rectangle(CanvasPoint::new(x, y), Size::new(size, size));
+        let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(size));
 
-        if let Some(tile) = image_tiles.get(&cell.piece) {
-            draw_image_tile(frame, image, *tile, CanvasPoint::new(x, y), size);
+        if let (Some(tile), Some(texture)) = (image_tiles.get(&cell.piece), texture) {
+            draw_image_tile(painter, image, *tile, rect, texture);
         } else {
-            frame.fill(&rect, Color::from_rgb8(202, 206, 211));
+            painter.rect_filled(rect, 0.0, Color32::from_rgb(202, 206, 211));
         }
 
-        draw_side_colors(frame, &cell.piece, CanvasPoint::new(x, y), size);
-
-        frame.stroke(
-            &rect,
-            canvas::Stroke::default()
-                .with_color(Color::from_rgb8(42, 48, 58))
-                .with_width(1.0),
+        painter.rect_stroke(
+            rect,
+            0.0,
+            Stroke::new(1.0, Color32::from_rgb(42, 48, 58)),
+            egui::StrokeKind::Inside,
         );
     });
 }
 
 fn draw_image_tile(
-    frame: &mut canvas::Frame,
+    painter: &egui::Painter,
     image: &PuzzleImage,
     tile: ImageTile,
-    origin: CanvasPoint,
-    size: f32,
+    rect: Rect,
+    texture: &TextureHandle,
 ) {
-    let clip = Rectangle::new(origin, Size::new(size, size));
-    let full_width = image.cols as f32 * size;
-    let full_height = image.rows as f32 * size;
-    let full_origin = CanvasPoint::new(
-        origin.x - tile.col as f32 * size,
-        origin.y - tile.row as f32 * size,
+    let col_width = 1.0 / image.cols as f32;
+    let row_height = 1.0 / image.rows as f32;
+    let uv = Rect::from_min_max(
+        Pos2::new(tile.col as f32 * col_width, tile.row as f32 * row_height),
+        Pos2::new(
+            (tile.col + 1) as f32 * col_width,
+            (tile.row + 1) as f32 * row_height,
+        ),
     );
 
-    frame.with_clip(clip, |frame| {
-        frame.with_save(|frame| {
-            let center = Vector::new(origin.x + size / 2.0, origin.y + size / 2.0);
-            frame.translate(center);
-            frame.rotate(std::f32::consts::FRAC_PI_2 * tile.clockwise_rotations as f32);
-            frame.translate(Vector::new(-center.x, -center.y));
-            frame.draw_image(
-                Rectangle::new(full_origin, Size::new(full_width, full_height)),
-                &image.handle,
-            );
+    let positions = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+    ];
+    let mut uvs = [
+        uv.left_top(),
+        uv.right_top(),
+        uv.right_bottom(),
+        uv.left_bottom(),
+    ];
+    uvs.rotate_right(tile.clockwise_rotations as usize % 4);
+
+    let mut mesh = egui::Mesh::with_texture(texture.id());
+    let index_start = mesh.vertices.len() as u32;
+
+    positions.into_iter().zip(uvs).for_each(|(pos, uv)| {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv,
+            color: Color32::WHITE,
         });
     });
-}
 
-fn draw_side_colors(frame: &mut canvas::Frame, piece: &Piece, origin: CanvasPoint, size: f32) {
-    let thickness = (size * 0.14).clamp(1.5, 5.0);
+    mesh.indices.extend_from_slice(&[
+        index_start,
+        index_start + 1,
+        index_start + 2,
+        index_start,
+        index_start + 2,
+        index_start + 3,
+    ]);
 
-    [
-        (Direction::Top, origin, Size::new(size, thickness)),
-        (
-            Direction::Right,
-            CanvasPoint::new(origin.x + size - thickness, origin.y),
-            Size::new(thickness, size),
-        ),
-        (
-            Direction::Bottom,
-            CanvasPoint::new(origin.x, origin.y + size - thickness),
-            Size::new(size, thickness),
-        ),
-        (Direction::Left, origin, Size::new(thickness, size)),
-    ]
-    .into_iter()
-    .for_each(|(direction, origin, size)| {
-        let edge = canvas::Path::rectangle(origin, size);
-        let color = color_for_side(piece.side(direction));
-        frame.fill(&edge, Color::from_rgba(color.r, color.g, color.b, 0.58));
-    });
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
@@ -189,29 +201,4 @@ fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
         (max_x + 1) as f32 * cell_size,
         (max_y + 1) as f32 * cell_size,
     )
-}
-
-fn color_for_side(side: &impl Debug) -> Color {
-    let hash = format!("{side:?}").bytes().fold(0_u32, |hash, byte| {
-        hash.wrapping_mul(31).wrapping_add(byte as u32)
-    });
-
-    hsl_to_rgb((hash % 360) as f32, 0.68, 0.56)
-}
-
-fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Color {
-    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-    let hue_prime = hue / 60.0;
-    let x = chroma * (1.0 - (hue_prime % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match hue_prime as u8 {
-        0 => (chroma, x, 0.0),
-        1 => (x, chroma, 0.0),
-        2 => (0.0, chroma, x),
-        3 => (0.0, x, chroma),
-        4 => (x, 0.0, chroma),
-        _ => (chroma, 0.0, x),
-    };
-    let m = lightness - chroma / 2.0;
-
-    Color::from_rgb(r1 + m, g1 + m, b1 + m)
 }
