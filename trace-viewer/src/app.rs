@@ -367,9 +367,10 @@ impl eframe::App for TraceViewer {
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .show_viewport(ui, |ui, viewport| {
                     draw_trace_canvas(
                         ui,
+                        viewport,
                         self.current_step(),
                         &self.image,
                         &self.image_tiles,

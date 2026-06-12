@@ -7,6 +7,7 @@ use crate::puzzle::{ImageTile, PuzzleImage};
 
 pub(crate) fn draw_trace_canvas(
     ui: &mut Ui,
+    viewport: Rect,
     step: &SolveStep,
     image: &PuzzleImage,
     image_tiles: &HashMap<Piece, ImageTile>,
@@ -18,9 +19,18 @@ pub(crate) fn draw_trace_canvas(
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
 
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(245, 247, 250));
+    let visible_rect = Rect::from_min_max(
+        rect.min + viewport.min.to_vec2(),
+        rect.min + viewport.max.to_vec2(),
+    )
+    .intersect(rect);
+    painter.rect_filled(visible_rect, 0.0, Color32::from_rgb(245, 247, 250));
 
     layout.iter().for_each(|entry| {
+        if !entry.bounds().intersects(viewport) {
+            return;
+        }
+
         draw_polyomino(
             &painter,
             entry.polyomino,
@@ -38,6 +48,13 @@ struct PolyominoLayout<'a> {
     polyomino: &'a TracePolyomino,
     origin: Pos2,
     cell_size: f32,
+}
+
+impl PolyominoLayout<'_> {
+    fn bounds(&self) -> Rect {
+        let (width, height) = polyomino_size(self.polyomino, self.cell_size);
+        Rect::from_min_size(self.origin, Vec2::new(width, height))
+    }
 }
 
 fn layout_polyominos(polyominos: &[TracePolyomino], width: f32) -> Vec<PolyominoLayout<'_>> {
