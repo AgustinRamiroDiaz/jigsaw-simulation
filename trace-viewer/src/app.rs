@@ -43,8 +43,11 @@ pub(crate) struct TraceViewer {
 
 impl TraceViewer {
     pub(crate) fn new(_creation_context: &eframe::CreationContext<'_>) -> Self {
-        let strategy = SolverStrategy::Random;
-        let setup = start_solver(6, 6, strategy, None).expect("default trace should start");
+        let config = initial_config();
+        let strategy = config.strategy.unwrap_or(SolverStrategy::Random);
+        let width = config.width.unwrap_or(6);
+        let height = config.height.unwrap_or(6);
+        let setup = start_solver(width, height, strategy, None).expect("default trace should start");
 
         Self {
             solver: Some(setup.solver),
@@ -54,10 +57,10 @@ impl TraceViewer {
             image: setup.image,
             image_texture: None,
             image_tiles: setup.image_tiles,
-            width_input: String::from("6"),
-            height_input: String::from("6"),
+            width_input: width.to_string(),
+            height_input: height.to_string(),
             strategy,
-            status: String::from("6 x 6 puzzle ready"),
+            status: format!("{width} x {height} puzzle ready with {strategy}"),
             is_playing: false,
             is_throttled: false,
             selected_image: None,
@@ -212,6 +215,54 @@ impl TraceViewer {
 
         ctx.request_repaint_after(interval);
     }
+}
+
+#[derive(Default)]
+struct InitialConfig {
+    width: Option<usize>,
+    height: Option<usize>,
+    strategy: Option<SolverStrategy>,
+}
+
+fn initial_config() -> InitialConfig {
+    let mut config = InitialConfig::default();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(search) = location_search() {
+            search
+                .trim_start_matches('?')
+                .split('&')
+                .filter_map(|pair| pair.split_once('='))
+                .for_each(|(key, value)| match key {
+                    "width" => config.width = parse_dimension(value),
+                    "height" => config.height = parse_dimension(value),
+                    "strategy" => config.strategy = SolverStrategy::from_query_value(value),
+                    _ => {}
+                });
+        }
+    }
+
+    if config
+        .width
+        .zip(config.height)
+        .is_some_and(|(width, height)| width.saturating_mul(height) > 10_000)
+    {
+        config.width = None;
+        config.height = None;
+    }
+
+    config
+}
+
+#[cfg(target_arch = "wasm32")]
+fn parse_dimension(value: &str) -> Option<usize> {
+    value.parse::<usize>().ok().filter(|dimension| *dimension > 0)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn location_search() -> Option<String> {
+    web_sys::window()?.location().search().ok()
 }
 
 impl eframe::App for TraceViewer {
@@ -384,7 +435,34 @@ impl eframe::App for TraceViewer {
                     );
                 });
         });
+
+        self.publish_browser_state();
     }
+}
+
+impl TraceViewer {
+    #[cfg(target_arch = "wasm32")]
+    fn publish_browser_state(&self) {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let Some(canvas) = document.get_element_by_id("trace-viewer-canvas") else {
+            return;
+        };
+
+        let _ = canvas.set_attribute("data-step-index", &self.absolute_step_index().to_string());
+        let _ = canvas.set_attribute(
+            "data-last-step-index",
+            &self.last_absolute_step_index().to_string(),
+        );
+        let _ = canvas.set_attribute("data-status", &self.status);
+        let _ = canvas.set_attribute("data-strategy", &self.strategy.to_string());
+        let _ = canvas.set_attribute("data-width", &self.width_input);
+        let _ = canvas.set_attribute("data-height", &self.height_input);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn publish_browser_state(&self) {}
 }
 
 fn action_label(action: &TraceAction) -> String {

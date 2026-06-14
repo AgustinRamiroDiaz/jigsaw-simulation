@@ -1,0 +1,17 @@
+{
+  "name": "jigsaw-simulation-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "e2e": "pnpm e2e:chrome && pnpm e2e:firefox",
+    "e2e:chrome": "start-server-and-test \"cd ../trace-viewer && env -u NO_COLOR trunk serve index.html --address 127.0.0.1 --port 8181 --no-autoreload\" http://127.0.0.1:8181 \"env -u ELECTRON_RUN_AS_NODE cypress run --browser chrome\"",
+    "e2e:firefox": "start-server-and-test \"cd ../trace-viewer && env -u NO_COLOR trunk serve index.html --address 127.0.0.1 --port 8181 --no-autoreload\" http://127.0.0.1:8181 \"env -u ELECTRON_RUN_AS_NODE cypress run --browser firefox\"",
+    "e2e:open": "env -u ELECTRON_RUN_AS_NODE cypress open"
+  },
+  "devDependencies": {
+    "cypress": "^15.17.0",
+    "start-server-and-test": "^2.0.12",
+    "typescript": "^5.7.3"
+  }
+}
