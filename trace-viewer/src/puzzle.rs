@@ -140,11 +140,9 @@ fn image_tile_lookup(grid: &[Vec<Piece>]) -> HashMap<Piece, ImageTile> {
 
 fn generated_puzzle_image(cols: usize, rows: usize) -> Vec<u8> {
     let (width, height) = fitted_image_size(cols, rows);
-    let pixels = (0..height)
+    (0..height)
         .flat_map(|y| (0..width).flat_map(move |x| landscape_pixel(x, y, width, height)))
-        .collect::<Vec<_>>();
-
-    pixels
+        .collect::<Vec<_>>()
 }
 
 fn uploaded_puzzle_image(uploaded: &UploadedImage, cols: usize, rows: usize) -> Vec<u8> {

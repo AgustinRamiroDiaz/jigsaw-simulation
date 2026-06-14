@@ -126,6 +126,18 @@ cargo test -p jigsaw-simulation
 cargo check -p trace-viewer
 ```
 
+Install the pre-commit hook to run the same checks as CI before each commit:
+
+```bash
+uv tool run pre-commit install
+```
+
+Run the hook suite manually:
+
+```bash
+uv tool run pre-commit run --all-files
+```
+
 ## Benchmarks and Profiling
 
 Compare the random, first-against-rest, and side-indexed strategies:

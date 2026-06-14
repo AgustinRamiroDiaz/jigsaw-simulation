@@ -47,7 +47,8 @@ impl TraceViewer {
         let strategy = config.strategy.unwrap_or(SolverStrategy::Random);
         let width = config.width.unwrap_or(6);
         let height = config.height.unwrap_or(6);
-        let setup = start_solver(width, height, strategy, None).expect("default trace should start");
+        let setup =
+            start_solver(width, height, strategy, None).expect("default trace should start");
 
         Self {
             solver: Some(setup.solver),
@@ -257,7 +258,10 @@ fn initial_config() -> InitialConfig {
 
 #[cfg(target_arch = "wasm32")]
 fn parse_dimension(value: &str) -> Option<usize> {
-    value.parse::<usize>().ok().filter(|dimension| *dimension > 0)
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|dimension| *dimension > 0)
 }
 
 #[cfg(target_arch = "wasm32")]

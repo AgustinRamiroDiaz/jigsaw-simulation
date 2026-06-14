@@ -4,7 +4,7 @@ use std::{
 };
 
 use jigsaw_simulation::{
-    FirstAgainstRestPickingStrategy, PickingStrategy, Piece, PuzzleError, PuzzleSolver,
+    FirstAgainstRestPickingStrategy, PairPickingSolver, PickingStrategy, Piece, PuzzleError,
     RandomPickingStrategy, SideIndexedSolver, generate_guid_grid, pieces_from_grid,
 };
 
@@ -76,7 +76,7 @@ fn benchmark<F: StrategyFactory>(case: &PuzzleCase, sample_count: usize) -> Benc
 }
 
 fn solve(pieces: Vec<Piece>, strategy: Box<dyn PickingStrategy>) -> Result<usize, PuzzleError> {
-    let mut solver = PuzzleSolver::with_picking_strategy(pieces, strategy)?;
+    let mut solver = PairPickingSolver::with_picking_strategy(pieces, strategy)?;
     let mut attempts = 0;
 
     for step in solver.by_ref() {
