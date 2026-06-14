@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, Vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, Ui, Vec2};
 use jigsaw_simulation::{Piece, SolveStep, TracePolyomino};
 
 use crate::puzzle::{ImageTile, PuzzleImage};
@@ -26,6 +26,8 @@ pub(crate) fn draw_trace_canvas(
     .intersect(rect);
     painter.rect_filled(visible_rect, 0.0, Color32::from_rgb(245, 247, 250));
 
+    let mut tile_mesh = texture.map(|texture| egui::Mesh::with_texture(texture.id()));
+
     layout.iter().for_each(|entry| {
         if !entry.bounds().intersects(viewport) {
             return;
@@ -38,9 +40,13 @@ pub(crate) fn draw_trace_canvas(
             entry.cell_size,
             image,
             image_tiles,
-            texture,
+            tile_mesh.as_mut(),
         );
     });
+
+    if let Some(tile_mesh) = tile_mesh.filter(|mesh| !mesh.vertices.is_empty()) {
+        painter.add(egui::Shape::mesh(tile_mesh));
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -106,36 +112,25 @@ fn draw_polyomino(
     cell_size: f32,
     image: &PuzzleImage,
     image_tiles: &HashMap<Piece, ImageTile>,
-    texture: Option<&TextureHandle>,
+    tile_mesh: Option<&mut egui::Mesh>,
 ) {
+    let mut tile_mesh = tile_mesh;
+
     polyomino.cells.iter().for_each(|cell| {
         let x = origin.x + cell.point.x as f32 * cell_size;
         let y = origin.y + cell.point.y as f32 * cell_size;
         let size = cell_size - 2.0;
         let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(size));
 
-        if let (Some(tile), Some(texture)) = (image_tiles.get(&cell.piece), texture) {
-            draw_image_tile(painter, image, *tile, rect, texture);
+        if let (Some(tile), Some(mesh)) = (image_tiles.get(&cell.piece), tile_mesh.as_deref_mut()) {
+            append_image_tile(mesh, image, *tile, rect);
         } else {
             painter.rect_filled(rect, 0.0, Color32::from_rgb(202, 206, 211));
         }
-
-        painter.rect_stroke(
-            rect,
-            0.0,
-            Stroke::new(1.0, Color32::from_rgb(42, 48, 58)),
-            egui::StrokeKind::Inside,
-        );
     });
 }
 
-fn draw_image_tile(
-    painter: &egui::Painter,
-    image: &PuzzleImage,
-    tile: ImageTile,
-    rect: Rect,
-    texture: &TextureHandle,
-) {
+fn append_image_tile(mesh: &mut egui::Mesh, image: &PuzzleImage, tile: ImageTile, rect: Rect) {
     let col_width = 1.0 / image.cols as f32;
     let row_height = 1.0 / image.rows as f32;
     let uv = Rect::from_min_max(
@@ -160,7 +155,6 @@ fn draw_image_tile(
     ];
     uvs.rotate_right(tile.clockwise_rotations as usize % 4);
 
-    let mut mesh = egui::Mesh::with_texture(texture.id());
     let index_start = mesh.vertices.len() as u32;
 
     positions.into_iter().zip(uvs).for_each(|(pos, uv)| {
@@ -179,8 +173,6 @@ fn draw_image_tile(
         index_start + 2,
         index_start + 3,
     ]);
-
-    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn polyomino_size(polyomino: &TracePolyomino, cell_size: f32) -> (f32, f32) {
